@@ -31,6 +31,11 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("Get-AuthenticodeSignature", initializer)
         self.assertIn("Python Software Foundation", initializer)
         self.assertIn("Assert-LiveTasksInactive", initializer)
+        self.assertIn("Find-CompatibleBasePython", initializer)
+        self.assertIn("Test-CompatibleBasePython", initializer)
+        self.assertIn("Python\\pythoncore-3.12-64\\python.exe", initializer)
+        self.assertIn('@("/repair", "/quiet")', initializer)
+        self.assertIn("复用已验证的Python 3.12.10 x64", initializer)
         self.assertNotIn("https://www.python.org/ftp", initializer)
 
     def test_initializer_accepts_qmt_install_roots_and_waits_for_userdata(self):

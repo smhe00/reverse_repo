@@ -19,6 +19,7 @@ $pythonSha256 = (
 $pythonFilename = "python-$pythonVersion-amd64.exe"
 $runtimeDirectory = Join-Path $repoRoot ".runtime\python312"
 $runtimePython = Join-Path $runtimeDirectory "python.exe"
+$script:BasePythonPath = ""
 $venvDirectory = Join-Path $repoRoot ".venv"
 $venvPython = Join-Path $venvDirectory "Scripts\python.exe"
 $runtimeConfigPath = Join-Path $repoRoot "config\runtime.local.json"
@@ -171,9 +172,64 @@ function Assert-PythonExecutable {
     }
 }
 
+function Test-CompatibleBasePython {
+    param([Parameter(Mandatory = $true)][string]$PythonPath)
+    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
+        return $false
+    }
+    $probe = & $PythonPath -c (
+        "import struct,sys;" +
+        "print('.'.join(map(str,sys.version_info[:3]))+'|'+" +
+        "str(struct.calcsize('P')*8))"
+    ) 2>$null
+    return (
+        $null -ne $LASTEXITCODE `
+        -and [int]$LASTEXITCODE -eq 0 `
+        -and [string]$probe -eq "3.12.10|64"
+    )
+}
+
+function Find-CompatibleBasePython {
+    $candidates = @(
+        $runtimePython,
+        (Join-Path `
+            $env:LOCALAPPDATA `
+            "Python\pythoncore-3.12-64\python.exe"),
+        (Join-Path `
+            $env:LOCALAPPDATA `
+            "Programs\Python\Python312\python.exe")
+    )
+    foreach ($registryPath in @(
+        "HKCU:\Software\Python\PythonCore\3.12\InstallPath",
+        "HKLM:\Software\Python\PythonCore\3.12\InstallPath",
+        "HKLM:\Software\WOW6432Node\Python\PythonCore\3.12\InstallPath"
+    )) {
+        if (-not (Test-Path -LiteralPath $registryPath)) {
+            continue
+        }
+        $key = Get-Item -LiteralPath $registryPath
+        $registeredExecutable = [string]$key.GetValue("ExecutablePath")
+        $registeredRoot = [string]$key.GetValue("")
+        if (-not [string]::IsNullOrWhiteSpace($registeredExecutable)) {
+            $candidates += $registeredExecutable
+        }
+        if (-not [string]::IsNullOrWhiteSpace($registeredRoot)) {
+            $candidates += Join-Path $registeredRoot "python.exe"
+        }
+    }
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if (Test-CompatibleBasePython -PythonPath $candidate) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+    return $null
+}
+
 function Install-PrivatePython {
-    if (Test-Path -LiteralPath $runtimePython -PathType Leaf) {
-        Assert-PythonExecutable -PythonPath $runtimePython
+    $compatiblePython = Find-CompatibleBasePython
+    if (-not [string]::IsNullOrWhiteSpace($compatiblePython)) {
+        $script:BasePythonPath = $compatiblePython
+        Write-Output "复用已验证的Python 3.12.10 x64：$compatiblePython"
         return
     }
     if (
@@ -264,10 +320,38 @@ function Install-PrivatePython {
     if ([int]$process.ExitCode -ne 0) {
         throw "Private Python installer failed: $($process.ExitCode)"
     }
-    Assert-PythonExecutable -PythonPath $runtimePython
+    $compatiblePython = Find-CompatibleBasePython
+    if ([string]::IsNullOrWhiteSpace($compatiblePython)) {
+        Write-Warning (
+            "Python安装器返回成功，但登记的解释器文件不存在；" +
+            "尝试修复Windows中的既有Python 3.12.10安装。"
+        )
+        $repair = Start-Process `
+            -FilePath $installerPath `
+            -ArgumentList @("/repair", "/quiet") `
+            -Wait `
+            -PassThru `
+            -WindowStyle Hidden
+        if ([int]$repair.ExitCode -ne 0) {
+            throw "Python repair failed: $($repair.ExitCode)"
+        }
+        $compatiblePython = Find-CompatibleBasePython
+    }
+    if ([string]::IsNullOrWhiteSpace($compatiblePython)) {
+        throw (
+            "Python installer returned success but no compatible executable " +
+            "was found. Remove the stale Python 3.12.10 entry from Windows " +
+            "Installed apps, then run .\rr init again."
+        )
+    }
+    $script:BasePythonPath = $compatiblePython
+    Assert-PythonExecutable -PythonPath $script:BasePythonPath
 }
 
 function Install-VirtualEnvironment {
+    if ([string]::IsNullOrWhiteSpace($script:BasePythonPath)) {
+        throw "A compatible base Python was not selected."
+    }
     if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
         if (
             (Test-Path -LiteralPath $venvDirectory -PathType Container) `
@@ -278,7 +362,7 @@ function Install-VirtualEnvironment {
                 "before retrying: $venvDirectory"
             )
         }
-        & $runtimePython -m venv $venvDirectory
+        & $script:BasePythonPath -m venv $venvDirectory
         if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
             throw "Creating the local virtual environment failed."
         }
