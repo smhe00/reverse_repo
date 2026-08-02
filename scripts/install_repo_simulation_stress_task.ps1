@@ -63,8 +63,7 @@ $simulationBindingPath = Join-Path `
 if (-not (Test-Path -LiteralPath $simulationBindingPath -PathType Leaf)) {
     throw "Simulation account binding is missing: $simulationBindingPath"
 }
-$binding = Get-Content -LiteralPath $simulationBindingPath -Raw |
-    ConvertFrom-Json
+$binding = Read-ReverseRepoJson -Path $simulationBindingPath
 $simulationEntries = @(
     $binding.accounts |
         Where-Object {

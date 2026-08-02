@@ -17,6 +17,28 @@ function Get-ReverseRepoPowerShell {
     return $path
 }
 
+function Read-ReverseRepoJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "JSON file is missing: $Path"
+    }
+    try {
+        # Windows PowerShell 5.1 treats BOM-less UTF-8 as the active ANSI
+        # code page. All project JSON is UTF-8, including Chinese QMT paths.
+        $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+        $json = [System.IO.File]::ReadAllText($Path, $strictUtf8)
+        return (ConvertFrom-Json -InputObject $json -ErrorAction Stop)
+    }
+    catch {
+        throw (
+            "Invalid UTF-8 JSON file: $Path. " +
+            $_.Exception.Message
+        )
+    }
+}
+
 function Get-ReverseRepoRuntimeConfig {
     if ($null -ne $script:ReverseRepoRuntimeConfig) {
         return $script:ReverseRepoRuntimeConfig
@@ -31,13 +53,7 @@ function Get-ReverseRepoRuntimeConfig {
             "and edit the machine-specific paths."
         )
     }
-    # Windows PowerShell 5.1 treats BOM-less UTF-8 as the active ANSI code
-    # page. Read JSON explicitly as UTF-8 so Chinese QMT paths remain valid.
-    $json = [System.IO.File]::ReadAllText(
-        $path,
-        [System.Text.Encoding]::UTF8
-    )
-    $script:ReverseRepoRuntimeConfig = ConvertFrom-Json -InputObject $json
+    $script:ReverseRepoRuntimeConfig = Read-ReverseRepoJson -Path $path
     return $script:ReverseRepoRuntimeConfig
 }
 

@@ -98,6 +98,29 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("action.Execute -ieq $expectedPowerShell", manager)
         self.assertIn("action.Execute -ine $expectedPowerShell", manager)
 
+    def test_all_powershell_json_inputs_use_explicit_utf8_reader(self):
+        runtime = (
+            ROOT / "scripts" / "reverse_repo_runtime.ps1"
+        ).read_text(encoding="utf-8-sig")
+        initializer = (
+            ROOT / "scripts" / "initialize_reverse_repo.ps1"
+        ).read_text(encoding="utf-8-sig")
+        stress = (
+            ROOT / "scripts" / "install_repo_simulation_stress_task.ps1"
+        ).read_text(encoding="utf-8-sig")
+        verifier = (ROOT / "verify.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("function Read-ReverseRepoJson", runtime)
+        self.assertIn("System.Text.UTF8Encoding($false, $true)", runtime)
+        self.assertIn(
+            "Read-ReverseRepoJson -Path $runtimeConfigPath",
+            initializer,
+        )
+        self.assertIn(
+            "Read-ReverseRepoJson -Path $simulationBindingPath",
+            stress,
+        )
+        self.assertIn("test_windows_powershell_utf8_json.ps1", verifier)
+
     def test_rr_cert_dispatches_all_supported_operations(self):
         command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
         self.assertIn('if /I "%~1"=="cert"', command)

@@ -34,6 +34,15 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
 & $windowsPowerShell `
     -NoProfile `
     -ExecutionPolicy Bypass `
+    -File (Join-Path `
+        $bundleRoot `
+        "tests\test_windows_powershell_utf8_json.ps1")
+if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+    throw "Windows PowerShell UTF-8 JSON verification failed."
+}
+& $windowsPowerShell `
+    -NoProfile `
+    -ExecutionPolicy Bypass `
     -File (Join-Path $bundleRoot "tests\test_portable_python_runtime.ps1")
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Portable Python isolation verification failed."

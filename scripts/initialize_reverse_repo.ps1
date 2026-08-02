@@ -549,8 +549,7 @@ function Resolve-QmtUserdataPath {
 function Initialize-RuntimeConfiguration {
     $existing = $null
     if (Test-Path -LiteralPath $runtimeConfigPath -PathType Leaf) {
-        $existing = Get-Content -LiteralPath $runtimeConfigPath -Raw |
-            ConvertFrom-Json
+        $existing = Read-ReverseRepoJson -Path $runtimeConfigPath
     }
     $existingLive = if ($null -eq $existing) {
         ""
