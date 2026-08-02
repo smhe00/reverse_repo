@@ -2,37 +2,6 @@
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$initializerPath = Join-Path `
-    $repoRoot `
-    "scripts\initialize_reverse_repo.ps1"
-$tokens = $null
-$errors = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile(
-    $initializerPath,
-    [ref]$tokens,
-    [ref]$errors
-)
-if ($errors.Count -ne 0) {
-    throw "Initializer cannot be parsed for portable Python tests."
-}
-foreach ($functionName in @(
-    "Assert-PythonExecutable",
-    "Install-PortablePython"
-)) {
-    $definition = $ast.Find(
-        {
-            param($node)
-            $node -is `
-                [System.Management.Automation.Language.FunctionDefinitionAst] `
-                -and $node.Name -eq $functionName
-        },
-        $true
-    )
-    if ($null -eq $definition) {
-        throw "$functionName was not found."
-    }
-    Invoke-Expression $definition.Extent.Text
-}
 
 function Get-PythonRegistrationSnapshot {
     $result = @()
@@ -60,20 +29,7 @@ $testRoot = Join-Path `
     ([System.IO.Path]::GetTempPath()) `
     ("reverse_repo_portable_python_" + [guid]::NewGuid().ToString("N"))
 try {
-    $pythonVersion = "3.12.10"
-    $pythonPackageSha512 = (
-        "bbda4dcf688a94211b62d50968a91b38f305d0b8d1ecd90269f74a86f8a0a4fc" +
-        "ebb7ca162a0753a47691eb3df0c964009bd3d8194c6fd19afae8d5fd01e1cc0f"
-    )
-    $pythonPackagePath = Join-Path `
-        $repoRoot `
-        "dist\python-3.12.10-portable.nupkg"
-    $runtimeDirectory = Join-Path $testRoot ".runtime\python312"
-    $runtimePython = Join-Path $runtimeDirectory "python.exe"
-    $bootstrapDirectory = Join-Path $testRoot "tmp\bootstrap"
-    $venvDirectory = Join-Path $testRoot ".venv"
-    $venvPython = Join-Path $venvDirectory "Scripts\python.exe"
-
+    New-Item -ItemType Directory -Path $testRoot | Out-Null
     $userPathBefore = [Environment]::GetEnvironmentVariable("PATH", "User")
     $machinePathBefore = [Environment]::GetEnvironmentVariable(
         "PATH",
@@ -81,8 +37,69 @@ try {
     )
     $registrationBefore = Get-PythonRegistrationSnapshot
 
-    Install-PortablePython
-    & $runtimePython -m venv $venvDirectory
+    if (Test-Path -LiteralPath (Join-Path $repoRoot ".git")) {
+        # Maintainer checkout: reassemble tracked small parts locally so the
+        # test does not depend on Gitee availability.
+        $manifestPath = Join-Path `
+            $repoRoot `
+            "dist\python-3.12.10-portable.parts.json"
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw |
+            ConvertFrom-Json
+        $packagePath = Join-Path $testRoot "python-portable.nupkg"
+        $packageStream = [System.IO.File]::Create($packagePath)
+        try {
+            foreach ($part in @($manifest.parts)) {
+                $partPath = Join-Path $repoRoot ("dist\" + [string]$part.name)
+                $actualPartHash = (
+                    Get-FileHash -LiteralPath $partPath -Algorithm SHA256
+                ).Hash.ToLowerInvariant()
+                if (
+                    (Get-Item -LiteralPath $partPath).Length -ne
+                        [long]$part.size -or
+                    $actualPartHash -ne [string]$part.sha256
+                ) {
+                    throw "Portable Python source part is invalid: $partPath"
+                }
+                $partStream = [System.IO.File]::OpenRead($partPath)
+                try {
+                    $partStream.CopyTo($packageStream)
+                }
+                finally {
+                    $partStream.Dispose()
+                }
+            }
+        }
+        finally {
+            $packageStream.Dispose()
+        }
+        $actualPackageHash = (
+            Get-FileHash -LiteralPath $packagePath -Algorithm SHA512
+        ).Hash.ToLowerInvariant()
+        if ($actualPackageHash -ne [string]$manifest.package_sha512) {
+            throw "Reassembled portable Python source package is invalid."
+        }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $expandedPath = Join-Path $testRoot "expanded"
+        [System.IO.Compression.ZipFile]::ExtractToDirectory(
+            $packagePath,
+            $expandedPath
+        )
+        $basePython = Join-Path $expandedPath "tools\python.exe"
+    }
+    else {
+        # Extracted end-user package: rr init has already placed the runtime
+        # inside this project before verify.ps1 is called.
+        $basePython = Join-Path `
+            $repoRoot `
+            ".runtime\python312\python.exe"
+    }
+
+    if (-not (Test-Path -LiteralPath $basePython -PathType Leaf)) {
+        throw "Portable base Python is missing: $basePython"
+    }
+    $venvDirectory = Join-Path $testRoot ".venv"
+    $venvPython = Join-Path $venvDirectory "Scripts\python.exe"
+    & $basePython -m venv $venvDirectory
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
         throw "Portable Python failed to create a local virtual environment."
     }

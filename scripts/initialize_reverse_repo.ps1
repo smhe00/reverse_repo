@@ -16,9 +16,12 @@ $pythonPackageSha512 = (
     "bbda4dcf688a94211b62d50968a91b38f305d0b8d1ecd90269f74a86f8a0a4fc" +
     "ebb7ca162a0753a47691eb3df0c964009bd3d8194c6fd19afae8d5fd01e1cc0f"
 )
-$pythonPackagePath = Join-Path `
+$pythonPackageManifestPath = Join-Path `
     $repoRoot `
-    "dist\python-3.12.10-portable.nupkg"
+    "dist\python-3.12.10-portable.parts.json"
+$pythonPackageBaseUri = (
+    "https://gitee.com/smhe/reverse_repo/raw/main/dist"
+)
 $runtimeDirectory = Join-Path $repoRoot ".runtime\python312"
 $runtimePython = Join-Path $runtimeDirectory "python.exe"
 $venvDirectory = Join-Path $repoRoot ".venv"
@@ -119,6 +122,47 @@ function Get-ReachableMirrors {
     )
 }
 
+function Get-VerifiedRemoteFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][long]$ExpectedSize,
+        [Parameter(Mandatory = $true)][string]$ExpectedSha256
+    )
+    $lastError = $null
+    foreach ($attempt in 1..3) {
+        try {
+            Invoke-WebRequest `
+                -UseBasicParsing `
+                -Uri $Uri `
+                -OutFile $Path `
+                -Headers @{ "Cache-Control" = "no-cache" } `
+                -TimeoutSec 300
+            $actualSize = (Get-Item -LiteralPath $Path).Length
+            $actualHash = (
+                Get-FileHash -LiteralPath $Path -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            if (
+                [long]$actualSize -ne $ExpectedSize -or
+                $actualHash -ne $ExpectedSha256.ToLowerInvariant()
+            ) {
+                throw "Downloaded Python part failed size or SHA-256 check."
+            }
+            return
+        }
+        catch {
+            $lastError = $_
+            if (Test-Path -LiteralPath $Path -PathType Leaf) {
+                Remove-Item -LiteralPath $Path -Force
+            }
+            if ($attempt -lt 3) {
+                Start-Sleep -Seconds 2
+            }
+        }
+    }
+    throw "Download failed after three attempts: $Uri - $lastError"
+}
+
 function Assert-PythonExecutable {
     param(
         [Parameter(Mandatory = $true)][string]$PythonPath,
@@ -163,44 +207,114 @@ function Install-PortablePython {
             "$runtimeDirectory. Move it aside before retrying."
         )
     }
-    if (-not (Test-Path -LiteralPath $pythonPackagePath -PathType Leaf)) {
-        throw "Bundled portable Python package is missing: $pythonPackagePath"
+    if (-not (
+        Test-Path -LiteralPath $pythonPackageManifestPath -PathType Leaf
+    )) {
+        throw (
+            "Portable Python part manifest is missing: " +
+            $pythonPackageManifestPath
+        )
     }
-    $actualHash = (
-        Get-FileHash -LiteralPath $pythonPackagePath -Algorithm SHA512
-    ).Hash.ToLowerInvariant()
-    if ($actualHash -ne $pythonPackageSha512) {
-        throw "Bundled portable Python package SHA-512 mismatch."
+    $manifest = Get-Content -LiteralPath $pythonPackageManifestPath -Raw |
+        ConvertFrom-Json
+    if (
+        [int]$manifest.schema_version -ne 1 -or
+        [string]$manifest.python_version -ne $pythonVersion -or
+        [string]$manifest.package_sha512 -ne $pythonPackageSha512 -or
+        [long]$manifest.package_size -le 0 -or
+        @($manifest.parts).Count -eq 0
+    ) {
+        throw "Portable Python part manifest is invalid."
     }
-
-    Add-Type -AssemblyName System.IO.Compression
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($pythonPackagePath)
-    try {
-        foreach ($entry in $archive.Entries) {
-            $name = $entry.FullName.Replace("\", "/")
-            if (
-                [string]::IsNullOrWhiteSpace($name) -or
-                $name.StartsWith("/") -or
-                $name -match "^[A-Za-z]:" -or
-                ($name.Split("/") -contains "..")
-            ) {
-                throw "Unsafe path in portable Python package: $name"
-            }
-        }
-        if (-not ($archive.Entries.FullName -contains "tools/python.exe")) {
-            throw "Portable Python package does not contain tools/python.exe."
-        }
-    }
-    finally {
-        $archive.Dispose()
-    }
-
     $stagingRoot = Join-Path `
         $bootstrapDirectory `
         ("python_" + [guid]::NewGuid().ToString("N"))
     try {
         New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+        $pythonPackagePath = Join-Path `
+            $stagingRoot `
+            "python-3.12.10-portable.nupkg"
+        $packageStream = [System.IO.File]::Create($pythonPackagePath)
+        try {
+            $partNumber = 0
+            foreach ($part in @($manifest.parts)) {
+                $partNumber += 1
+                $partName = [string]$part.name
+                $partSize = [long]$part.size
+                $partHash = [string]$part.sha256
+                if (
+                    $partName -notmatch `
+                        "^python-3\.12\.10-portable\.part[0-9]{2}$" -or
+                    $partSize -le 0 -or
+                    $partHash -notmatch "^[0-9a-f]{64}$"
+                ) {
+                    throw "Invalid portable Python part manifest entry."
+                }
+                Write-Output (
+                    "下载便携Python分片 $partNumber/" +
+                    @($manifest.parts).Count
+                )
+                $partPath = Join-Path $stagingRoot $partName
+                Get-VerifiedRemoteFile `
+                    -Uri ($pythonPackageBaseUri.TrimEnd("/") + "/" + $partName) `
+                    -Path $partPath `
+                    -ExpectedSize $partSize `
+                    -ExpectedSha256 $partHash
+                $partStream = [System.IO.File]::OpenRead($partPath)
+                try {
+                    $partStream.CopyTo($packageStream)
+                }
+                finally {
+                    $partStream.Dispose()
+                }
+                Remove-Item -LiteralPath $partPath -Force
+            }
+        }
+        finally {
+            $packageStream.Dispose()
+        }
+        if (
+            (Get-Item -LiteralPath $pythonPackagePath).Length -ne
+                [long]$manifest.package_size
+        ) {
+            throw "Reassembled portable Python package size mismatch."
+        }
+        $actualHash = (
+            Get-FileHash -LiteralPath $pythonPackagePath -Algorithm SHA512
+        ).Hash.ToLowerInvariant()
+        if ($actualHash -ne $pythonPackageSha512) {
+            throw "Reassembled portable Python package SHA-512 mismatch."
+        }
+
+        Add-Type -AssemblyName System.IO.Compression
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead(
+            $pythonPackagePath
+        )
+        try {
+            foreach ($entry in $archive.Entries) {
+                $name = $entry.FullName.Replace("\", "/")
+                if (
+                    [string]::IsNullOrWhiteSpace($name) -or
+                    $name.StartsWith("/") -or
+                    $name -match "^[A-Za-z]:" -or
+                    ($name.Split("/") -contains "..")
+                ) {
+                    throw "Unsafe path in portable Python package: $name"
+                }
+            }
+            if (-not (
+                $archive.Entries.FullName -contains "tools/python.exe"
+            )) {
+                throw (
+                    "Portable Python package does not contain " +
+                    "tools/python.exe."
+                )
+            }
+        }
+        finally {
+            $archive.Dispose()
+        }
         [System.IO.Compression.ZipFile]::ExtractToDirectory(
             $pythonPackagePath,
             $stagingRoot

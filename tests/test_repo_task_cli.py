@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import json
 import unittest
 import zipfile
 from pathlib import Path
@@ -39,8 +41,20 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertNotIn("https://www.python.org/ftp", initializer)
 
     def test_bundled_python_is_pinned_complete_nuget_runtime(self):
-        package = ROOT / "dist" / "python-3.12.10-portable.nupkg"
-        digest = hashlib.sha512(package.read_bytes()).hexdigest()
+        manifest = json.loads(
+            (
+                ROOT / "dist" / "python-3.12.10-portable.parts.json"
+            ).read_text(encoding="utf-8")
+        )
+        chunks = []
+        for part in manifest["parts"]:
+            content = (ROOT / "dist" / part["name"]).read_bytes()
+            self.assertEqual(len(content), part["size"])
+            self.assertEqual(hashlib.sha256(content).hexdigest(), part["sha256"])
+            chunks.append(content)
+        package = b"".join(chunks)
+        self.assertEqual(len(package), manifest["package_size"])
+        digest = hashlib.sha512(package).hexdigest()
         self.assertEqual(
             digest,
             "bbda4dcf688a94211b62d50968a91b38"
@@ -48,7 +62,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             "ebb7ca162a0753a47691eb3df0c964009"
             "bd3d8194c6fd19afae8d5fd01e1cc0f",
         )
-        with zipfile.ZipFile(package) as archive:
+        with zipfile.ZipFile(io.BytesIO(package)) as archive:
             names = set(archive.namelist())
         self.assertIn("tools/python.exe", names)
         self.assertIn("tools/Lib/venv/__init__.py", names)
