@@ -195,6 +195,19 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("无需安装或学习Git", quick)
         self.assertNotIn("下载或克隆本仓库", quick)
 
+    def test_readme_command_table_distinguishes_task_removal_scope(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        commands = readme[
+            readme.index("## 命令参考（熟悉流程后使用）"):
+            readme.index("## 策略配置")
+        ]
+        self.assertIn("| 命令 | 用途 | 与相近命令的差别 |", commands)
+        self.assertIn('`off`是“暂停并保留”', commands)
+        self.assertIn('`del`是“只删实盘”', commands)
+        self.assertIn('`clear`是“清空', commands)
+        self.assertIn("不影响模拟认证、压力或只读任务", commands)
+        self.assertIn("本项目已知的全部计划任务", commands)
+
     def test_readme_hides_internal_qmt_connection_directory(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("userdata_mini", readme)
