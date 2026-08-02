@@ -8,6 +8,50 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReverseRepoTaskCliTests(unittest.TestCase):
+    def test_rr_init_uses_inbox_windows_powershell(self):
+        command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
+        self.assertIn('if /I "%~1"=="init"', command)
+        self.assertIn("WindowsPowerShell\\v1.0\\powershell.exe", command)
+        self.assertIn("-Action Initialize", command)
+        self.assertNotIn("pwsh", command.lower())
+
+    def test_initializer_bootstraps_verified_python_from_domestic_mirrors(self):
+        initializer = (
+            ROOT / "scripts" / "initialize_reverse_repo.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn('$pythonVersion = "3.12.10"', initializer)
+        self.assertIn(
+            "67b5635e80ea51072b87941312d00ec8",
+            initializer,
+        )
+        self.assertIn("mirrors.tuna.tsinghua.edu.cn", initializer)
+        self.assertIn("mirrors.bfsu.edu.cn", initializer)
+        self.assertIn("mirrors.huaweicloud.com", initializer)
+        self.assertIn("pypi.tuna.tsinghua.edu.cn", initializer)
+        self.assertIn("Get-AuthenticodeSignature", initializer)
+        self.assertIn("Python Software Foundation", initializer)
+        self.assertIn("Assert-LiveTasksInactive", initializer)
+        self.assertNotIn("https://www.python.org/ftp", initializer)
+
+    def test_runtime_is_pinned_and_powershell_51_compatible(self):
+        requirements = (ROOT / "requirements.txt").read_text(
+            encoding="utf-8"
+        )
+        runtime = (
+            ROOT / "scripts" / "reverse_repo_runtime.ps1"
+        ).read_text(encoding="utf-8")
+        manager = (
+            ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("xtquant==250516.1.1", requirements)
+        self.assertNotIn("::IsFinite", runtime)
+        self.assertIn("::IsNaN", runtime)
+        self.assertIn("::IsInfinity", runtime)
+        self.assertNotIn("PowerShell 7", manager)
+        self.assertNotIn("pwsh.exe", manager)
+        self.assertIn("action.Execute -ieq $expectedPowerShell", manager)
+        self.assertIn("action.Execute -ine $expectedPowerShell", manager)
+
     def test_rr_cert_dispatches_all_supported_operations(self):
         command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
         self.assertIn('if /I "%~1"=="cert"', command)
@@ -60,7 +104,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         repository = readme.index("https://gitee.com/smhe/reverse_repo")
         strategy = readme.index("## 核心策略")
-        pdf_instructions = readme.index("## 附录G：README与PDF生成")
+        pdf_instructions = readme.index("## 附录H：README与PDF生成")
         disclaimer = readme.index("## 免责声明")
         self.assertLess(repository, strategy)
         self.assertLess(pdf_instructions, disclaimer)

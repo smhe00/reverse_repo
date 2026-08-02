@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Recipient = ""
 )
@@ -131,9 +131,13 @@ $config = [ordered]@{
     timeout_seconds = 10
     attempts = 3
 }
-$config |
-    ConvertTo-Json -Depth 4 |
-    Set-Content -LiteralPath $configPath -Encoding utf8NoBOM
+$configJson = $config | ConvertTo-Json -Depth 4
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    $configPath,
+    $configJson + [Environment]::NewLine,
+    $utf8NoBom
+)
 $securePassword | Export-Clixml -LiteralPath $secretPath -Force
 
 $env:MINIQMT_ALERT_SMTP_PASSWORD = $plainPassword

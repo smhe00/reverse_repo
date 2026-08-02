@@ -1,4 +1,4 @@
-[CmdletBinding(SupportsShouldProcess = $true)]
+﻿[CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [datetime]$StressDate = [datetime]::MinValue
 )
@@ -85,13 +85,15 @@ if (-not $PSCmdlet.ShouldProcess(
     return
 }
 
-$pwsh = (Get-Command "pwsh.exe" -ErrorAction Stop).Source
+$powerShellPath = Get-ReverseRepoPowerShell
 $userId = (
     [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 )
 $action = New-ScheduledTaskAction `
-    -Execute $pwsh `
-    -Argument ('-NoProfile -File "{0}"' -f $wrapper) `
+    -Execute $powerShellPath `
+    -Argument (
+        '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $wrapper
+    ) `
     -WorkingDirectory $repoRoot
 $trigger = New-ScheduledTaskTrigger -Once -At $startAt
 $settings = New-ScheduledTaskSettingsSet `

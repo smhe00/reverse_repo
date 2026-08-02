@@ -1,4 +1,4 @@
-[CmdletBinding(SupportsShouldProcess = $true)]
+﻿[CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [datetime]$ValidationDate = [datetime]::MinValue
 )
@@ -33,7 +33,7 @@ if ($ValidationDate.DayOfWeek -in @(
         $ValidationDate.ToString("yyyy-MM-dd")
     )
 }
-$pwsh = (Get-Command "pwsh.exe" -ErrorAction Stop).Source
+$powerShellPath = Get-ReverseRepoPowerShell
 $userId = (
     [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 )
@@ -83,8 +83,11 @@ foreach ($definition in $definitions) {
         continue
     }
     $action = New-ScheduledTaskAction `
-        -Execute $pwsh `
-        -Argument ('-NoProfile -File "{0}"' -f $definition.Wrapper) `
+        -Execute $powerShellPath `
+        -Argument (
+            '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f `
+                $definition.Wrapper
+        ) `
         -WorkingDirectory $repoRoot
     $trigger = New-ScheduledTaskTrigger -Once -At $definition.At
     $settings = New-ScheduledTaskSettingsSet `

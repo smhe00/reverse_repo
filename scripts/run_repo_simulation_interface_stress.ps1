@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "reverse_repo_runtime.ps1")
 $repoRoot = Get-ReverseRepoRoot

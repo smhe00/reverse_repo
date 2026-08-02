@@ -1,2 +1,3 @@
-# Production execution uses only Python's standard library plus XtQuant,
-# which must come from the installed miniQMT/QMT Python runtime.
+# The version below is the XtQuant runtime validated with this repository.
+# Its numpy, pandas, requests and tqdm dependencies are installed transitively.
+xtquant==250516.1.1

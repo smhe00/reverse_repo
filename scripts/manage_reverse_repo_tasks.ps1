@@ -1,4 +1,4 @@
-[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = "Medium")]
+﻿[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = "Medium")]
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet(
@@ -18,6 +18,7 @@ param(
         "StressDisable",
         "StressRemove",
         "StressStatus",
+        "Initialize",
         "Help"
     )]
     [string]$Action,
@@ -114,16 +115,9 @@ function Initialize-TaskDefinitions {
     )
 }
 
-function Get-PowerShell7Path {
-    $command = Get-Command "pwsh.exe" -ErrorAction SilentlyContinue
-    if ($null -eq $command) {
-        throw "PowerShell 7 (pwsh.exe) is required."
-    }
-    return $command.Source
-}
-
 function Get-ManagedTaskStatus {
     Initialize-TaskDefinitions
+    $expectedPowerShell = Get-ReverseRepoPowerShell
     foreach ($definition in $taskDefinitions) {
         $task = Get-ScheduledTask `
             -TaskName $definition.Name `
@@ -157,8 +151,13 @@ function Get-ManagedTaskStatus {
         }
         $isDisabled = ([string]$task.State -eq "Disabled")
         $trigger = $task.Triggers | Select-Object -First 1
+        $action = $task.Actions | Select-Object -First 1
         $actualStart = ([datetime]$trigger.StartBoundary).ToString(
             "HH:mm:ss"
+        )
+        $expectedArguments = (
+            '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f `
+                $definition.Wrapper
         )
         $hasNeverRun = (
             [int64]$info.LastTaskResult -eq 267011 `
@@ -172,7 +171,10 @@ function Get-ManagedTaskStatus {
             EnabledByConfig = $definition.EnabledByConfig
             Schedule = "周一至周五 $actualStart"
             ScheduleMatchesConfig = (
-                $actualStart -eq $definition.StartAt
+                $actualStart -eq $definition.StartAt `
+                -and [string]$action.Execute -ieq $expectedPowerShell `
+                -and [string]$action.WorkingDirectory -eq $repoRoot `
+                -and [string]$action.Arguments -eq $expectedArguments
             )
             LiveEnableSnapshot = if (
                 Test-Path -LiteralPath (
@@ -224,7 +226,7 @@ function Install-ManagedTasks {
     )) {
         Remove-ReverseRepoLiveEnableManifest
     }
-    $pwshPath = Get-PowerShell7Path
+    $powerShellPath = Get-ReverseRepoPowerShell
     $userId = (
         [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     )
@@ -239,9 +241,10 @@ function Install-ManagedTasks {
             continue
         }
         $taskAction = New-ScheduledTaskAction `
-            -Execute $pwshPath `
+            -Execute $powerShellPath `
             -Argument (
-                '-NoProfile -File "{0}"' -f $definition.Wrapper
+                '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f `
+                    $definition.Wrapper
             ) `
             -WorkingDirectory $repoRoot
         $trigger = New-ScheduledTaskTrigger `
@@ -416,11 +419,14 @@ function Assert-ManagedTasksMatchConfig {
             "HH:mm:ss"
         )
         $action = $task.Actions | Select-Object -First 1
-        $expectedArguments = '-NoProfile -File "{0}"' -f (
-            $definition.Wrapper
+        $expectedArguments = (
+            '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f `
+                $definition.Wrapper
         )
+        $expectedPowerShell = Get-ReverseRepoPowerShell
         if (
             $actualStart -ne $definition.StartAt `
+            -or [string]$action.Execute -ine $expectedPowerShell `
             -or [string]$action.WorkingDirectory -ne $repoRoot `
             -or [string]$action.Arguments -ne $expectedArguments
         ) {
@@ -847,6 +853,11 @@ function Show-ReverseRepoTaskHelp {
     @"
 rr - miniQMT 逆回购自动任务管理工具
 
+【首次初始化】
+  .\rr init
+      在仓库内安装Python 3.12.10 x64、创建.venv、使用国内镜像安装XtQuant，
+      生成本机配置和签名密钥，并引导账户绑定；不会启用实盘任务。
+
 【实盘任务：关键命令】
   .\rr stat
       首先查看两项实盘任务、策略参数、调度时间和最近结果。
@@ -912,6 +923,16 @@ rr - miniQMT 逆回购自动任务管理工具
 }
 
 switch ($Action) {
+    "Initialize" {
+        $powerShellPath = Get-ReverseRepoPowerShell
+        & $powerShellPath `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File (Join-Path $PSScriptRoot "initialize_reverse_repo.ps1")
+        if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+            throw "Reverse-repo initialization failed."
+        }
+    }
     "Install" {
         Install-ManagedTasks
         Get-ManagedTaskStatus
@@ -968,7 +989,12 @@ switch ($Action) {
         Get-SimulationStressTaskStatus
     }
     "Help" {
-        Initialize-TaskDefinitions
+        $runtimeConfigPath = Join-Path `
+            $repoRoot `
+            "config\runtime.local.json"
+        if (Test-Path -LiteralPath $runtimeConfigPath -PathType Leaf) {
+            Initialize-TaskDefinitions
+        }
         Show-ReverseRepoTaskHelp
     }
 }

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet("live", "simulation")]
     [string]$Environment

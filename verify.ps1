@@ -1,9 +1,20 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $bundleRoot = $PSScriptRoot
 $scriptsRoot = Join-Path $bundleRoot "scripts"
 . (Join-Path $scriptsRoot "reverse_repo_runtime.ps1")
+$windowsPowerShell = Get-ReverseRepoPowerShell
+& $windowsPowerShell `
+    -NoProfile `
+    -ExecutionPolicy Bypass `
+    -File (Join-Path `
+        $scriptsRoot `
+        "verify_windows_powershell_compatibility.ps1") `
+    -Root $bundleRoot
+if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+    throw "Windows PowerShell 5.1 compatibility verification failed."
+}
 $pythonPath = Get-ReverseRepoPython
 
 # Validate the complete local F/S relationship and both cash ratios without

@@ -1,10 +1,20 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 
 $script:ReverseRepoRoot = Split-Path -Parent $PSScriptRoot
 $script:ReverseRepoRuntimeConfig = $null
 
 function Get-ReverseRepoRoot {
     return $script:ReverseRepoRoot
+}
+
+function Get-ReverseRepoPowerShell {
+    $path = Join-Path `
+        $env:SystemRoot `
+        "System32\WindowsPowerShell\v1.0\powershell.exe"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Windows PowerShell 5.1 is required: $path"
+    }
+    return $path
 }
 
 function Get-ReverseRepoRuntimeConfig {
@@ -21,10 +31,13 @@ function Get-ReverseRepoRuntimeConfig {
             "and edit the machine-specific paths."
         )
     }
-    $script:ReverseRepoRuntimeConfig = Get-Content `
-        -LiteralPath $path `
-        -Raw |
-        ConvertFrom-Json
+    # Windows PowerShell 5.1 treats BOM-less UTF-8 as the active ANSI code
+    # page. Read JSON explicitly as UTF-8 so Chinese QMT paths remain valid.
+    $json = [System.IO.File]::ReadAllText(
+        $path,
+        [System.Text.Encoding]::UTF8
+    )
+    $script:ReverseRepoRuntimeConfig = ConvertFrom-Json -InputObject $json
     return $script:ReverseRepoRuntimeConfig
 }
 
@@ -240,7 +253,12 @@ function Get-ReverseRepoFirstCashUsageRatio {
     catch [FormatException] {
         throw "first_cash_usage_ratio must be a number."
     }
-    if (-not [double]::IsFinite($parsed) -or $parsed -lt 0 -or $parsed -gt 1) {
+    if (
+        [double]::IsNaN($parsed) `
+        -or [double]::IsInfinity($parsed) `
+        -or $parsed -lt 0 `
+        -or $parsed -gt 1
+    ) {
         throw "first_cash_usage_ratio must be from 0 through 1."
     }
     return $parsed
@@ -260,7 +278,12 @@ function Get-ReverseRepoSecondCashUsageRatio {
     catch [FormatException] {
         throw "second_cash_usage_ratio must be a number."
     }
-    if (-not [double]::IsFinite($parsed) -or $parsed -lt 0 -or $parsed -gt 1) {
+    if (
+        [double]::IsNaN($parsed) `
+        -or [double]::IsInfinity($parsed) `
+        -or $parsed -lt 0 `
+        -or $parsed -gt 1
+    ) {
         throw "second_cash_usage_ratio must be from 0 through 1."
     }
     return $parsed

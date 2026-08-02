@@ -25,6 +25,16 @@
 
 在`reverse_repo`目录运行：
 
+### 新机器首次初始化
+
+```powershell
+.\rr init     # 安装仓库私有Python、配置环境并引导账户绑定
+```
+
+`rr init`使用Windows 10自带的Windows PowerShell 5.1，不要求PowerShell 7。
+它不会启用实盘任务；若发现已有实盘任务未禁用，会拒绝改变环境并要求先执行
+`rr off`。
+
 ### 实盘任务：关键命令
 
 ```powershell
@@ -67,31 +77,34 @@
 
 ## 新机器部署
 
-1. 安装并配置miniQMT，确认Python可以导入`xtquant`。
-2. 将`config/runtime.example.json`复制为`config/runtime.local.json`，填写Python、
-   实盘miniQMT和模拟miniQMT的`userdata_mini`路径。
-3. 启动并登录实盘miniQMT，确认只登录一个状态正常的证券账户，然后执行：
+1. 安装实盘和模拟miniQMT，并准备可访问国内镜像的网络。无需预装Python或
+   PowerShell 7。
+2. 在仓库目录执行：
 
    ```powershell
-   .\bind.ps1 live
+   .\rr init
    ```
 
-4. 关闭实盘miniQMT，启动并登录模拟miniQMT，然后执行：
+   初始化器会在仓库的`.runtime`中安装Python 3.12.10 x64，创建`.venv`，从
+   国内PyPI镜像安装锁定的XtQuant及其依赖，询问两个`userdata_mini`路径，
+   生成本机配置与签名密钥，并引导实盘、模拟账户绑定。计划任务安装后保持
+   Disabled。
+3. 执行本地复核：
 
    ```powershell
-   .\bind.ps1 simulation
+   .\rr stat
+   .\verify.ps1
    ```
 
-5. 可选：执行`.\rr mail`保存SMTP配置。密码由Windows当前用户加密，不能跨
+4. 可选：执行`.\rr mail`保存SMTP配置。密码由Windows当前用户加密，不能跨
    用户或跨机器复制；跳过本步不影响`.\rr on`和策略执行。
-6. 执行`.\rr add`安装任务。新任务保持Disabled，不会立即交易。
-7. 执行`.\verify.ps1`，通常约2–5秒，不连接miniQMT也不下单。
-8. 执行`.\rr cert`，用一个完整交易日完成真实模拟miniQMT功能验证并生成
+5. 执行`.\rr cert`，用一个完整交易日完成真实模拟miniQMT功能验证并生成
    能力证书。
-9. 执行`.\rr stat`复核参数和计划时间，再用`.\rr on`启用实盘。
+6. 再次执行`.\rr stat`复核参数和计划时间，然后用`.\rr on`启用实盘。
 
 账户绑定工具会自行查询miniQMT账户，只在本机保存账户号的SHA-256指纹。不要
-在命令、代码或配置文件中填写证券账号。
+在命令、代码或配置文件中填写证券账号。若初始化时暂不启动某个miniQMT，可
+选择跳过绑定，之后分别执行`.\bind.ps1 live`和`.\bind.ps1 simulation`。
 
 ## 策略配置
 
@@ -112,7 +125,7 @@
 
 | 验证 | 通常耗时 | 是否连接miniQMT | 是否下单 | 用途 |
 |---|---:|---|---|---|
-| `verify.ps1`本地验证 | 2–5秒 | 否 | 否 | 校验当前四项参数、全部单元测试、PowerShell语法、状态机形式证明及README/PDF同步 |
+| `verify.ps1`本地验证 | 2–5秒 | 否 | 否 | 校验当前四项参数、Windows PowerShell 5.1兼容性、全部单元测试、状态机形式证明及README/PDF同步 |
 | 模拟账户能力认证 | 一个完整交易日 | 是，仅模拟 | 是，单阶段最多1000元 | 验证上午恢复、下午订单生命周期、接口、账户绑定和最终证书签名 |
 | 5Hz全链路压力测试 | 一个完整交易日 | 是，仅模拟 | 是，模拟T+0 | 测试网络、机器、Tick回调、查询和交易接口承压；不生成或替代能力证书 |
 
@@ -181,6 +194,8 @@
   未配置、配置损坏、密码解密失败或发送失败都不影响策略状态和退出码。
 - `rr off`、`rr add`、`rr del`和`rr reset`都会撤销实盘启用快照。`rr off`和
   `rr del`不依赖策略参数校验；即使配置损坏，仍可禁用或删除任务。
+- `rr init`仅用于首次部署或明确重建本机Python环境；已有实盘任务未处于
+  Disabled时会拒绝运行，不会在后台替换正在使用的解释器。
 
 迁移前先执行`.\rr off`，并确认没有本策略的未决委托。不要复制活动锁、未完成
 的当日日志或旧机器的模拟证书。迁移后必须重新检查miniQMT路径、账户绑定、
@@ -192,6 +207,8 @@ XtQuant运行时和Windows任务状态；SMTP告警如需使用，应在新机�
 reverse_repo/
 ├─ rr.cmd                 # 简短任务管理入口
 ├─ bind.ps1               # 实盘/模拟账户绑定入口
+├─ .runtime/              # rr init安装的私有Python，不进入版本库
+├─ .venv/                 # 策略专用虚拟环境，不进入版本库
 ├─ scripts/               # 执行器、状态机、门禁和PowerShell封装
 ├─ tests/                 # 独立单元测试
 ├─ docs/                  # 状态机说明及形式验证结果
@@ -389,12 +406,34 @@ QMT本机路径、SMTP配置与密码、签名密钥、实盘启用快照和运�
 实盘任务启用状态检查，因此仅限维护人员使用。普通用户不要在README正文流程
 中复制这条长命令。
 
-## 附录G：README与PDF生成
+## 附录G：初始化器、Python与国内镜像
+
+`rr init`不使用QMT目录中的`python36.dll`。该文件是QMT内部嵌入式运行库，
+不是带有`python.exe`、`pip`和`venv`的完整Python发行版。初始化器安装仓库
+私有Python，不修改系统PATH、不创建全局pip配置，也不覆盖非空但不完整的
+`.runtime`或`.venv`目录。
+
+Python 3.12已经进入仅安全修复阶段；3.12.10是官方最后一个提供Windows x64
+二进制安装器的3.12版本，因此本项目固定使用3.12.10，而不是需要本机编译的
+后续源码版本。初始化器按响应时间探测以下国内镜像，并在下载或安装失败时切换：
+
+- Python安装包：清华大学TUNA、北京外国语大学BFSU、华为云。
+- PyPI：清华大学TUNA、北京外国语大学BFSU、华为云。
+
+Python安装包必须同时通过固定SHA-256和Python Software Foundation的
+Authenticode数字签名校验。pip只将最终成功的国内镜像写入当前`.venv`的站点
+级配置，不修改用户或系统配置。XtQuant版本由`requirements.txt`锁定；其变化
+会使模拟能力证书失效，必须重新认证。
+
+初始化器会创建本机HMAC签名密钥，但不会生成模拟能力证书、启用任务或下单。
+完整模拟认证仍需另行执行`rr cert`。
+
+## 附录H：README与PDF生成
 
 PDF由完整的`README.md`生成。新机器如需生成PDF，先安装文档依赖：
 
 ```powershell
-python -m pip install -r requirements-docs.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-docs.txt
 ```
 
 每次修改`README.md`后，必须在同一次变更中执行：

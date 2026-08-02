@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$QmtPath = "",
     [string]$AccountBinding = "",
     [string]$AlertConfig = ""

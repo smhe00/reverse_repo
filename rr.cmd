@@ -2,77 +2,83 @@
 setlocal EnableDelayedExpansion
 
 set "MANAGER=%~dp0scripts\manage_reverse_repo_tasks.ps1"
+set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+set "PSARGS=-NoProfile -ExecutionPolicy Bypass -File"
 
 if "%~1"=="" (
-    pwsh -NoProfile -File "%MANAGER%" -Action Help
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Help
+    exit /b !ERRORLEVEL!
+)
+if /I "%~1"=="init" (
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Initialize
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="add" (
-    pwsh -NoProfile -File "%MANAGER%" -Action Install
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Install
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="del" (
-    pwsh -NoProfile -File "%MANAGER%" -Action Remove
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Remove
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="stat" (
-    pwsh -NoProfile -File "%MANAGER%" -Action Status
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Status
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="on" (
-    pwsh -NoProfile -File "%MANAGER%" -Action Enable
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Enable
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="off" (
-    pwsh -NoProfile -File "%MANAGER%" -Action Disable
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Disable
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="mail" (
-    pwsh -NoProfile -File "%MANAGER%" -Action ConfigureMail
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action ConfigureMail
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="mt" (
-    pwsh -NoProfile -File "%MANAGER%" -Action TestMail
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action TestMail
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="reset" (
-    pwsh -NoProfile -File "%MANAGER%" -Action ResetCertificate
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action ResetCertificate
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="cert" (
     if /I "%~2"=="off" (
-        pwsh -NoProfile -File "%MANAGER%" -Action CertDisable
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action CertDisable
     ) else if /I "%~2"=="del" (
-        pwsh -NoProfile -File "%MANAGER%" -Action CertRemove
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action CertRemove
     ) else if /I "%~2"=="stat" (
-        pwsh -NoProfile -File "%MANAGER%" -Action CertStatus
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action CertStatus
     ) else if "%~2"=="" (
-        pwsh -NoProfile -File "%MANAGER%" -Action Cert
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Cert
     ) else (
-        pwsh -NoProfile -File "%MANAGER%" -Action Cert -CertDate "%~2"
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Cert -CertDate "%~2"
     )
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="stress" (
     if /I "%~2"=="off" (
-        pwsh -NoProfile -File "%MANAGER%" -Action StressDisable
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action StressDisable
     ) else if /I "%~2"=="del" (
-        pwsh -NoProfile -File "%MANAGER%" -Action StressRemove
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action StressRemove
     ) else if /I "%~2"=="stat" (
-        pwsh -NoProfile -File "%MANAGER%" -Action StressStatus
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action StressStatus
     ) else if "%~2"=="" (
-        pwsh -NoProfile -File "%MANAGER%" -Action Stress
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Stress
     ) else (
-        pwsh -NoProfile -File "%MANAGER%" -Action Stress -StressDate "%~2"
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Stress -StressDate "%~2"
     )
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="help" (
-    pwsh -NoProfile -File "%MANAGER%" -Action Help
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Help
     exit /b !ERRORLEVEL!
 )
 
-pwsh -NoProfile -File "%MANAGER%" -Action Help
+"%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Help
 echo.
 echo Unknown argument: %~1
 exit /b 2
