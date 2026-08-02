@@ -12,9 +12,21 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Get-ReverseRepoRoot
 $windowsPowerShell = Get-ReverseRepoPowerShell
 $pythonVersion = "3.12.10"
-$pythonPackageUri = (
-    "https://mirrors.huaweicloud.com/python/3.12.10/" +
-    "python-3.12.10-amd64.zip"
+$pythonPackageSources = @(
+    [pscustomobject]@{
+        Name = "华为云"
+        Uri = (
+            "https://mirrors.huaweicloud.com/python/3.12.10/" +
+            "python-3.12.10-amd64.zip"
+        )
+    },
+    [pscustomobject]@{
+        Name = "npmmirror"
+        Uri = (
+            "https://registry.npmmirror.com/-/binary/python/3.12.10/" +
+            "python-3.12.10-amd64.zip"
+        )
+    }
 )
 $pythonPackageSize = 32399384
 $pythonPackageSha256 = (
@@ -213,12 +225,33 @@ function Install-PortablePython {
         $pythonPackagePath = Join-Path `
             $stagingRoot `
             "python-3.12.10-amd64.zip"
-        Write-Output "从华为云下载便携Python $pythonVersion x64。"
-        Get-VerifiedRemoteFile `
-            -Uri $pythonPackageUri `
-            -Path $pythonPackagePath `
-            -ExpectedSize $pythonPackageSize `
-            -ExpectedSha256 $pythonPackageSha256
+        $downloaded = $false
+        $downloadErrors = @()
+        foreach ($source in $pythonPackageSources) {
+            $sourceName = [string]$source.Name
+            Write-Output (
+                "从${sourceName}下载便携Python $pythonVersion x64。"
+            )
+            try {
+                Get-VerifiedRemoteFile `
+                    -Uri ([string]$source.Uri) `
+                    -Path $pythonPackagePath `
+                    -ExpectedSize $pythonPackageSize `
+                    -ExpectedSha256 $pythonPackageSha256
+                $downloaded = $true
+                break
+            }
+            catch {
+                $downloadErrors += "${sourceName}: $($_.Exception.Message)"
+                Write-Warning "${sourceName}下载失败，尝试下一个备用源。"
+            }
+        }
+        if (-not $downloaded) {
+            throw (
+                "所有便携Python下载源均失败：" +
+                ($downloadErrors -join " | ")
+            )
+        }
 
         Add-Type -AssemblyName System.IO.Compression
         Add-Type -AssemblyName System.IO.Compression.FileSystem

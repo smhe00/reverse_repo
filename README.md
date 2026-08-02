@@ -48,11 +48,13 @@ rr stat 人工确认 → rr on 启用实盘
 <a id="quick-step-1"></a>
 ### 第1步：准备miniQMT和空目录
 
-1. 安装实盘miniQMT和模拟miniQMT。此时不要求手工寻找或创建`userdata_mini`。
-2. 新建一个空目录，例如`D:\reverse_repo`。
-3. 在该目录中打开Windows 10自带的Windows PowerShell。无需安装或学习Git，
+1. 安装实盘miniQMT和模拟miniQMT。
+2. 分别启动两套miniQMT，勾选“独立交易”并至少成功登录一次。未完成这一步时，
+   初始化器会暂停并提示登录，不会继续配置账户或任务。
+3. 新建一个空目录，例如`D:\reverse_repo`。
+4. 在该目录中打开Windows 10自带的Windows PowerShell。无需安装或学习Git，
    也无需预装Python或PowerShell 7。
-4. 确保首次安装时能够访问Gitee、华为云Python镜像和国内PyPI镜像。
+5. 确保首次安装时能够访问Gitee、至少一个Python下载源和国内PyPI镜像。
 
 详细说明：[目录结构](#details-directory)、[初始化器与Python](#details-init)。
 
@@ -62,7 +64,7 @@ rr stat 人工确认 → rr on 启用实盘
 确认PowerShell当前目录就是上一步创建的空目录，然后完整复制下面这一行：
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $p=Join-Path $env:TEMP 'reverse_repo_install.ps1'; Invoke-WebRequest 'https://gitee.com/smhe/reverse_repo/raw/main/install.ps1' -OutFile $p -UseBasicParsing; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -Destination $PWD.Path
+irm https://gitee.com/smhe/reverse_repo/raw/main/install.ps1 | iex
 ```
 
 这条命令会从Gitee匿名下载安装器；安装器下载发布包及独立SHA-256文件，校验
@@ -70,16 +72,16 @@ rr stat 人工确认 → rr on 启用实盘
 Gitee登录，不会安装Git。目标目录不为空、下载内容不是有效发布包或校验不一致
 时会停止，不覆盖已有文件，也不会启用实盘任务。
 
-初始化器只询问miniQMT安装目录，不要求输入`userdata_mini`。默认值为：
+初始化器只询问miniQMT安装目录。默认值为：
 
 ```text
 实盘miniQMT安装目录 [D:\国金证券QMT交易端]
 模拟miniQMT安装目录 [D:\国金QMT交易端模拟]
 ```
 
-路径正确时直接按回车。若刚安装的QMT尚未生成`userdata_mini`，初始化器会暂停，
-提示启动对应miniQMT、勾选“独立交易”并登录一次；完成后输入`Y`即可原地重试，
-不需要退出或重新下载安装。程序内部会自动定位生成的`userdata_mini`。
+路径正确时直接按回车。若尚未完成对应miniQMT的独立交易登录，初始化器会暂停；
+按提示成功登录后输入`Y`即可原地重试，不需要退出或重新下载安装。内部连接路径
+由程序自动定位，用户无需寻找或填写。
 
 当程序随后要求绑定账户时，保持对应miniQMT登录并输入`Y`。绑定只查询账户，
 不下单，也不会把证券账号写入代码或配置。
@@ -509,11 +511,10 @@ QMT本机路径、SMTP配置与密码、签名密钥、实盘启用快照和运�
 后才复制文件并调用`rr init`。因此普通用户不需要Git；Git克隆仅是开发者维护
 源码时的可选方式。
 
-`rr init`面向用户显示并保存的是miniQMT安装目录概念：首次安装默认使用
-`D:\国金证券QMT交易端`和`D:\国金QMT交易端模拟`。实际运行配置仍保存各安装
-目录下自动生成的`userdata_mini`，因为XtQuant连接接口需要该目录。如果目录尚未
-生成，初始化器会等待用户启动对应QMT、勾选“独立交易”并完成一次登录，然后
-在原位置重新检测。
+`rr init`面向用户只显示miniQMT安装目录：首次安装默认使用
+`D:\国金证券QMT交易端`和`D:\国金QMT交易端模拟`。运行所需的内部连接路径由
+初始化器自动定位。若用户尚未在某套miniQMT中勾选“独立交易”并成功登录，程序
+会暂停并提示完成该步骤，然后在原位置重新检测。
 
 `rr init`不使用QMT目录中的`python36.dll`，也不探测或复用系统Python。初始化器
 从华为云Python镜像下载CPython官方Python 3.12.10 x64完整ZIP，核对固定文件
@@ -524,7 +525,8 @@ QMT本机路径、SMTP配置与密码、签名密钥、实盘启用快照和运�
 
 Python 3.12已经进入仅安全修复阶段；3.12.10是该系列最后一个完整维护版本，
 本项目固定使用其中具备完整`venv`、`ensurepip`和`pip`的`amd64.zip`，而不是缺少
-完整环境管理能力的embeddable包。下载地址固定为华为云国内镜像，当前发布包
+完整环境管理能力的embeddable包。Python首先从华为云国内镜像下载，失败后自动
+改用npmmirror；两个来源必须通过相同的固定文件大小和SHA-256校验。当前发布包
 不再携带或从Gitee分发Python二进制。初始化器会在私有运行时内补齐该官方ZIP
 已经携带、但免安装布局未放到根目录的两个标准`venv`启动文件；文件不会复制到
 项目目录以外。依赖安装按响应时间依次尝试以下国内PyPI镜像：清华大学TUNA、

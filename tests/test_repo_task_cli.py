@@ -25,8 +25,11 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             initializer,
         )
         self.assertIn("mirrors.huaweicloud.com/python/3.12.10", initializer)
+        self.assertIn("registry.npmmirror.com/-/binary/python/3.12.10", initializer)
         self.assertIn("python-3.12.10-amd64.zip", initializer)
         self.assertIn("$pythonPackageSize = 32399384", initializer)
+        self.assertIn("foreach ($source in $pythonPackageSources)", initializer)
+        self.assertIn("所有便携Python下载源均失败", initializer)
         self.assertIn("pypi.tuna.tsinghua.edu.cn", initializer)
         self.assertIn("Assert-LiveTasksInactive", initializer)
         self.assertIn("Install-PortablePython", initializer)
@@ -143,9 +146,17 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             "https://gitee.com/smhe/reverse_repo/raw/main/install.ps1",
             quick,
         )
-        self.assertIn("-Destination $PWD.Path", quick)
+        self.assertIn(
+            "irm https://gitee.com/smhe/reverse_repo/raw/main/install.ps1 | iex",
+            quick,
+        )
         self.assertIn("无需安装或学习Git", quick)
         self.assertNotIn("下载或克隆本仓库", quick)
+
+    def test_readme_hides_internal_qmt_connection_directory(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("userdata_mini", readme)
+        self.assertIn("勾选“独立交易”并至少成功登录一次", readme)
 
     def test_no_git_installer_has_integrity_and_overwrite_guards(self):
         installer = (ROOT / "install.ps1").read_text(encoding="utf-8")
