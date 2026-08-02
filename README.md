@@ -21,90 +21,140 @@
 任一资金比例设为`0`，对应Windows任务不会启用；即使封装脚本被手工误启动，
 也会在连接miniQMT和下单前退出。
 
-## 命令速查：实盘优先
+<a id="quick-start"></a>
+## 快速开始（Getting Started）
 
-在`reverse_repo`目录运行：
+本节面向第一次使用的同学。所有命令都在`reverse_repo`目录执行；按顺序完成，
+不要提前执行`rr on`。
 
-### 新机器首次初始化
+### 操作流程简图
 
-```powershell
-.\rr init     # 安装仓库私有Python、配置环境并引导账户绑定
+```text
+安装实盘与模拟miniQMT
+          ↓
+运行 rr init（只初始化，不启用实盘）
+          ↓
+rr stat + verify.ps1 本地复核
+          ↓
+rr cert 完成一个交易日的模拟认证
+          ↓
+rr stat 人工确认 → rr on 启用实盘
+          ↓
+每日保持miniQMT登录；需要停止时 rr off
 ```
 
-`rr init`使用Windows 10自带的Windows PowerShell 5.1，不要求PowerShell 7。
-它不会启用实盘任务；若发现已有实盘任务未禁用，会拒绝改变环境并要求先执行
-`rr off`。
+<a id="quick-step-1"></a>
+### 第1步：准备miniQMT和代码
 
-### 实盘任务：关键命令
+1. 安装实盘miniQMT和模拟miniQMT，确认两者都有各自的`userdata_mini`目录。
+2. 下载或克隆本仓库，并打开Windows 10自带的PowerShell或命令提示符。
+3. 确保首次初始化时能够访问国内镜像。无需预装Python或PowerShell 7。
+
+详细说明：[目录结构](#details-directory)、[初始化器与Python](#details-init)。
+
+<a id="quick-step-2"></a>
+### 第2步：执行一键初始化
 
 ```powershell
-.\rr stat     # 查看配置参数、任务状态、调度时间和最近结果
+.\rr init
+```
+
+按提示输入实盘、模拟miniQMT路径；当程序要求绑定账户时，启动并登录对应的
+miniQMT后输入`Y`。绑定只查询账户，不下单，也不会把证券账号写入代码或配置。
+
+预期结果：仓库私有Python和`.venv`安装完成、本机配置与签名密钥已经生成，
+两项实盘计划任务均已安装但保持`Disabled`。如果暂时跳过绑定，之后执行：
+
+```powershell
+.\bind.ps1 live
+.\bind.ps1 simulation
+.\rr add
+```
+
+详细说明：[策略参数](#details-config)、[初始化器安全边界](#details-init)。
+
+<a id="quick-step-3"></a>
+### 第3步：检查配置并完成本地验证
+
+```powershell
+.\rr stat
+.\verify.ps1
+```
+
+必须看到两项任务均为`Disabled`、`ScheduleMatchesConfig=True`，并且本地验证
+通过。若任务定义与当前配置不一致，执行`.\rr add`后重新检查；不要直接启用。
+
+详细说明：[配置范围](#details-config)、[验证层次](#details-validation)。
+
+<a id="quick-step-4"></a>
+### 第4步：用模拟账户完成一个交易日认证
+
+```powershell
+.\rr off
+.\rr cert
+.\rr cert stat
+```
+
+`rr cert`会选择下一个可完整执行的工作日。当天保持模拟miniQMT和Windows用户
+登录；程序以模拟账户完成第一次恢复、第二次订单生命周期和15:31证书签发。
+认证不会向实盘账户下单。15:31以后再次执行`rr cert stat`检查三项结果。
+
+详细说明：[认证耗时与失效条件](#details-validation)。压力测试不是认证必需步骤，
+需要时参见[一次性接口压力测试](#details-stress)。
+
+<a id="quick-step-5"></a>
+### 第5步：人工复核后启用实盘
+
+启动并登录实盘miniQMT，然后执行：
+
+```powershell
+.\rr stat
+.\rr on
+.\rr stat
+```
+
+执行`rr on`前，人工确认两次执行时间、资金比例、任务状态和账户环境。启用后，
+资金比例大于`0`的阶段应显示为`Ready`；比例为`0`的阶段继续保持Disabled。
+
+详细说明：[实盘安全与运维](#details-operations)、[执行器实际动作](#details-strategy)。
+
+<a id="quick-step-6"></a>
+### 第6步：日常运行、停止与修改
+
+- 每个交易日保持Windows用户和实盘miniQMT登录，任务会按配置自动执行。
+- 每次修改前先运行`.\rr off`；确认参数并验证后再决定是否重新认证和启用。
+- 需要立即阻止后续自动执行时运行`.\rr off`。
+- 故障邮件是可选功能，可用`.\rr mail`配置、`.\rr mt`测试。
+
+详细说明：[参数修改流程](#details-validation)、[实盘故障处理](#details-operations)。
+
+<a id="details-commands"></a>
+## 命令参考（熟悉流程后使用）
+
+```powershell
+.\rr init     # 新机器初始化；不启用实盘
+.\rr stat     # 查看参数、任务状态、调度和最近结果
 .\rr off      # 禁用实盘任务
-.\rr on       # 通过全部门禁后，只启用资金比例大于0的阶段
-.\rr add      # 安装或更新两个实盘任务；完成后保持Disabled
+.\rr on       # 通过全部门禁后启用资金比例大于0的阶段
+.\rr add      # 安装或更新实盘任务；完成后保持Disabled
 .\rr del      # 删除实盘任务
+
+.\rr cert [日期]       # 部署一次性模拟认证
+.\rr cert stat         # 查看认证任务；另有off和del
+.\rr reset             # 撤销并归档模拟能力证书
+
+.\rr stress [日期]     # 部署一次性模拟账户5Hz压力测试
+.\rr stress stat       # 查看压力任务；另有off和del
+.\rr mail              # 可选：配置故障告警邮件
+.\rr mt                # 发送故障邮件测试
+.\verify.ps1           # 本机参数、测试、状态机和文档同步验证
+.\rr                   # 显示分类完整帮助
 ```
 
-涉及真实资金时先执行`rr stat`确认参数和调度；需要阻止后续自动执行时使用
-`rr off`。`rr on`不会安装缺失任务，首次部署或改变调度后先使用`rr add`。
+`rr on`不会安装缺失任务；任务不匹配时先执行`rr add`。`cert off/del`和
+`stress off/del`在任务运行中拒绝强制终止。返回[快速开始](#quick-start)。
 
-### 模拟能力认证：实盘前必须完成
-
-```powershell
-.\rr cert                 # 自动选择下一个可完整执行的工作日
-.\rr cert 2026-08-10      # 指定未来工作日
-.\rr cert stat            # 查看三项认证任务
-.\rr cert off             # 未运行时撤销后续调度
-.\rr cert del             # 删除认证任务定义
-.\rr reset                # 撤销并归档已有模拟能力证书
-```
-
-`rr cert`部署第一次恢复验证、第二次订单生命周期验证和15:31证书签发三项一次性
-任务。部署前必须先`rr off`；任务正在运行时，`off`和`del`拒绝强制终止。
-
-### 压力测试、邮件与本地维护
-
-```powershell
-.\rr stress [日期]  # 部署一次性模拟账户5Hz全链路压力测试
-.\rr stress stat    # 查看压力任务；另有off和del
-.\rr mail     # 配置故障告警邮件
-.\rr mt       # 发送故障邮件测试
-.\rr          # 显示分类完整帮助
-.\verify.ps1  # 数秒完成本机参数、单元测试、语法、状态机和PDF同步检查
-```
-
-仓库根目录的`.\rr`是兼容转发入口，含义相同。
-
-## 新机器部署
-
-1. 安装实盘和模拟miniQMT，并准备可访问国内镜像的网络。无需预装Python或
-   PowerShell 7。
-2. 在仓库目录执行：
-
-   ```powershell
-   .\rr init
-   ```
-
-   初始化器会在仓库的`.runtime`中安装Python 3.12.10 x64，创建`.venv`，从
-   国内PyPI镜像安装锁定的XtQuant及其依赖，询问两个`userdata_mini`路径，
-   生成本机配置与签名密钥，并引导实盘、模拟账户绑定。计划任务安装后保持
-   Disabled。
-3. 执行本地复核：
-
-   ```powershell
-   .\rr stat
-   .\verify.ps1
-   ```
-
-4. 可选：执行`.\rr mail`保存SMTP配置。密码由Windows当前用户加密，不能跨
-   用户或跨机器复制；跳过本步不影响`.\rr on`和策略执行。
-5. 执行`.\rr cert`，用一个完整交易日完成真实模拟miniQMT功能验证并生成
-   能力证书。
-6. 再次执行`.\rr stat`复核参数和计划时间，然后用`.\rr on`启用实盘。
-
-账户绑定工具会自行查询miniQMT账户，只在本机保存账户号的SHA-256指纹。不要
-在命令、代码或配置文件中填写证券账号。若初始化时暂不启动某个miniQMT，可
-选择跳过绑定，之后分别执行`.\bind.ps1 live`和`.\bind.ps1 simulation`。
+<a id="details-config"></a>
 
 ## 策略配置
 
@@ -120,6 +170,10 @@
 时间采用24小时制`HH:mm:ss`。配置不做午休映射，也不会把越界时间自动修正成
 其他时间；不合法配置会让`verify.ps1`、`rr add`和`rr on`直接失败。负数、
 大于`1`、非数字、`NaN`和无穷大的资金比例均会在连接miniQMT前被拒绝。
+
+对应快速开始：[第2步初始化](#quick-step-2)、[第3步本地验证](#quick-step-3)。
+
+<a id="details-validation"></a>
 
 ## 验证层次、耗时与适用条件
 
@@ -180,6 +234,10 @@
 能力证书绑定两项执行时间、状态机、执行与门禁源码以及XtQuant运行时；资金比例
 不属于全日能力证书。
 
+对应快速开始：[第3步本地验证](#quick-step-3)、[第4步模拟认证](#quick-step-4)。
+
+<a id="details-operations"></a>
+
 ## 实盘安全与运维
 
 - 交易日需启动并登录对应的miniQMT客户端，Windows用户保持登录。
@@ -200,6 +258,10 @@
 迁移前先执行`.\rr off`，并确认没有本策略的未决委托。不要复制活动锁、未完成
 的当日日志或旧机器的模拟证书。迁移后必须重新检查miniQMT路径、账户绑定、
 XtQuant运行时和Windows任务状态；SMTP告警如需使用，应在新机器重新配置。
+
+对应快速开始：[第5步启用实盘](#quick-step-5)、[第6步日常运维](#quick-step-6)。
+
+<a id="details-directory"></a>
 
 ## 附录A：目录结构
 
@@ -227,6 +289,8 @@ reverse_repo/
   当作连续交易盘口。
 - Windows任务会提前启动以完成连接和预检。默认配置下第一次任务09:28启动，
   第二次任务15:08启动；真正下单时间仍由配置项控制。
+
+<a id="details-stress"></a>
 
 ## 附录C：一次性模拟接口压力测试
 
@@ -304,6 +368,8 @@ T+0闭环。行情侧要求回调和轮询均至少观察到一个有效、非�
 提交`config/*.local.*`、`logs/`、`reports/`、`.venv/`和`tmp/`。公开仓只包含
 示例配置、代码、测试、说明文档以及同步生成的README PDF；证券账号指纹、
 QMT本机路径、SMTP配置与密码、签名密钥、实盘启用快照和运行证据均只留在本机。
+
+<a id="details-strategy"></a>
 
 ## 附录E：实盘操作策略明细
 
@@ -406,6 +472,8 @@ QMT本机路径、SMTP配置与密码、签名密钥、实盘启用快照和运�
 实盘任务启用状态检查，因此仅限维护人员使用。普通用户不要在README正文流程
 中复制这条长命令。
 
+<a id="details-init"></a>
+
 ## 附录G：初始化器、Python与国内镜像
 
 `rr init`不使用QMT目录中的`python36.dll`。该文件是QMT内部嵌入式运行库，
@@ -427,6 +495,10 @@ Authenticode数字签名校验。pip只将最终成功的国内镜像写入当�
 
 初始化器会创建本机HMAC签名密钥，但不会生成模拟能力证书、启用任务或下单。
 完整模拟认证仍需另行执行`rr cert`。
+
+对应快速开始：[第1步准备环境](#quick-step-1)、[第2步一键初始化](#quick-step-2)。
+
+<a id="details-pdf"></a>
 
 ## 附录H：README与PDF生成
 

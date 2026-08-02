@@ -36,6 +36,7 @@ FONT_MONO = Path(r"C:\Windows\Fonts\consola.ttf")
 TABLE_DIVIDER = re.compile(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*$")
 LINK = re.compile(r"\[([^]]+)]\(([^)]+)\)")
 HEADING = re.compile(r"^(#{1,3})\s+(.+)$")
+HTML_ANCHOR = re.compile(r'^<a\s+id="[A-Za-z0-9_-]+"></a>$')
 
 
 class OutlineDocTemplate(SimpleDocTemplate):
@@ -113,7 +114,11 @@ def inline_markup(value: str) -> str:
     value = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", value)
     value = re.sub(r"__([^_]+)__", r"<b>\1</b>", value)
     for index, (label, url) in enumerate(links):
-        rendered = label if label == url else f"{label} ({url})"
+        rendered = (
+            label
+            if label == url or url.startswith("#")
+            else f"{label} ({url})"
+        )
         replacement = html.escape(rendered, quote=False)
         value = value.replace(f"\x00LINK{index}\x00", replacement)
     return value
@@ -282,6 +287,10 @@ def markdown_story(source: str, styles: dict[str, ParagraphStyle], width: float)
             continue
         if in_code:
             code_lines.append(line)
+            index += 1
+            continue
+        if HTML_ANCHOR.match(stripped):
+            flush_paragraph()
             index += 1
             continue
         if stripped.startswith("|") and index + 1 < len(lines) and TABLE_DIVIDER.match(lines[index + 1]):

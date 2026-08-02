@@ -84,20 +84,27 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertNotIn('2026-08-03', installer)
         self.assertIn("Simulation certification date must be a weekday", installer)
 
-    def test_readme_exposes_short_live_and_cert_commands_first(self):
+    def test_readme_places_guided_quick_start_before_command_reference(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        quick = readme.index("## 命令速查：实盘优先")
-        live = readme.index("### 实盘任务：关键命令", quick)
-        certification = readme.index(
-            "### 模拟能力认证：实盘前必须完成",
-            quick,
-        )
+        core = readme.index("## 核心策略")
+        quick = readme.index("## 快速开始（Getting Started）")
+        commands = readme.index("## 命令参考（熟悉流程后使用）")
+        configuration = readme.index("## 策略配置")
         maintenance = readme.index("## 附录F：底层维护入口")
         long_command = readme.index(
             "install_repo_simulation_validation_tasks.ps1"
         )
-        self.assertLess(live, certification)
+        self.assertLess(core, quick)
+        self.assertLess(quick, commands)
+        self.assertLess(commands, configuration)
         self.assertGreater(long_command, maintenance)
+        for number in range(1, 7):
+            self.assertIn(f'<a id="quick-step-{number}"></a>', readme)
+        self.assertIn("#details-config", readme)
+        self.assertIn("#details-validation", readme)
+        self.assertIn("#details-operations", readme)
+        self.assertIn("#details-strategy", readme)
+        self.assertIn("#details-init", readme)
         self.assertIn(".\\rr cert stat", readme)
 
     def test_readme_ends_with_pdf_instructions_then_disclaimer(self):
