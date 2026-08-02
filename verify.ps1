@@ -99,4 +99,18 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Reverse-repo formal verification failed."
 }
 
+# A source checkout publishes the anonymous no-Git installation bundle. The
+# extracted end-user package has no .git directory and therefore does not need
+# to carry a second copy of itself.
+if (Test-Path -LiteralPath (Join-Path $bundleRoot ".git") -PathType Container) {
+    & $windowsPowerShell `
+        -NoProfile `
+        -ExecutionPolicy Bypass `
+        -File (Join-Path $scriptsRoot "build_release_bundle.ps1") `
+        -Check
+    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+        throw "Anonymous installation release package verification failed."
+    }
+}
+
 Write-Output "reverse_repo verification passed."

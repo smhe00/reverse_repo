@@ -107,6 +107,37 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("#details-init", readme)
         self.assertIn(".\\rr cert stat", readme)
 
+    def test_readme_offers_no_git_single_command_install(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        quick = readme[
+            readme.index("## 快速开始（Getting Started）"):
+            readme.index("## 命令参考（熟悉流程后使用）")
+        ]
+        self.assertIn(
+            "https://gitee.com/smhe/reverse_repo/raw/main/install.ps1",
+            quick,
+        )
+        self.assertIn("-Destination $PWD.Path", quick)
+        self.assertIn("无需安装或学习Git", quick)
+        self.assertNotIn("下载或克隆本仓库", quick)
+
+    def test_no_git_installer_has_integrity_and_overwrite_guards(self):
+        installer = (ROOT / "install.ps1").read_text(encoding="utf-8")
+        builder = (
+            ROOT / "scripts" / "build_release_bundle.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Destination must be an empty directory", installer)
+        self.assertIn("Get-FileHash", installer)
+        self.assertIn("Assert-SafeArchive", installer)
+        self.assertIn("reverse_repo-latest.zip.sha256", installer)
+        self.assertIn('"rr.cmd") init', installer)
+        self.assertIn("git.exe", builder)
+        self.assertIn("ls-files", builder)
+        self.assertIn("[switch]$Check", builder)
+        verifier = (ROOT / "verify.ps1").read_text(encoding="utf-8")
+        self.assertIn('"build_release_bundle.ps1"', verifier)
+        self.assertIn("-Check", verifier)
+
     def test_readme_ends_with_pdf_instructions_then_disclaimer(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         repository = readme.index("https://gitee.com/smhe/reverse_repo")

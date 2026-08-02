@@ -32,7 +32,9 @@
 ```text
 安装实盘与模拟miniQMT
           ↓
-运行 rr init（只初始化，不启用实盘）
+新建空目录 → 复制一条PowerShell命令
+          ↓
+自动下载、校验并运行 rr init（不启用实盘）
           ↓
 rr stat + verify.ps1 本地复核
           ↓
@@ -44,20 +46,29 @@ rr stat 人工确认 → rr on 启用实盘
 ```
 
 <a id="quick-step-1"></a>
-### 第1步：准备miniQMT和代码
+### 第1步：准备miniQMT和空目录
 
 1. 安装实盘miniQMT和模拟miniQMT，确认两者都有各自的`userdata_mini`目录。
-2. 下载或克隆本仓库，并打开Windows 10自带的PowerShell或命令提示符。
-3. 确保首次初始化时能够访问国内镜像。无需预装Python或PowerShell 7。
+2. 新建一个空目录，例如`D:\reverse_repo`。
+3. 在该目录中打开Windows 10自带的Windows PowerShell。无需安装或学习Git，
+   也无需预装Python或PowerShell 7。
+4. 确保首次安装时能够访问Gitee和国内Python、PyPI镜像。
 
 详细说明：[目录结构](#details-directory)、[初始化器与Python](#details-init)。
 
 <a id="quick-step-2"></a>
-### 第2步：执行一键初始化
+### 第2步：复制一条命令，自动获取并初始化
+
+确认PowerShell当前目录就是上一步创建的空目录，然后完整复制下面这一行：
 
 ```powershell
-.\rr init
+[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $p=Join-Path $env:TEMP 'reverse_repo_install.ps1'; Invoke-WebRequest 'https://gitee.com/smhe/reverse_repo/raw/main/install.ps1' -OutFile $p -UseBasicParsing; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -Destination $PWD.Path
 ```
+
+这条命令会从Gitee匿名下载安装器；安装器下载发布包及独立SHA-256文件，校验
+压缩包和内部路径，把文件展开到当前空目录，然后自动启动`rr init`。不要求
+Gitee登录，不会安装Git。目标目录不为空、下载内容不是有效发布包或校验不一致
+时会停止，不覆盖已有文件，也不会启用实盘任务。
 
 按提示输入实盘、模拟miniQMT路径；当程序要求绑定账户时，启动并登录对应的
 miniQMT后输入`Y`。绑定只查询账户，不下单，也不会把证券账号写入代码或配置。
@@ -70,6 +81,8 @@ miniQMT后输入`Y`。绑定只查询账户，不下单，也不会把证券账�
 .\bind.ps1 simulation
 .\rr add
 ```
+
+如果代码已经通过其他方式放入目录，不需要再次下载，直接运行`.\rr init`。
 
 详细说明：[策略参数](#details-config)、[初始化器安全边界](#details-init)。
 
@@ -267,6 +280,7 @@ XtQuant运行时和Windows任务状态；SMTP告警如需使用，应在新机�
 
 ```text
 reverse_repo/
+├─ install.ps1            # 无Git一键下载安装器
 ├─ rr.cmd                 # 简短任务管理入口
 ├─ bind.ps1               # 实盘/模拟账户绑定入口
 ├─ .runtime/              # rr init安装的私有Python，不进入版本库
@@ -274,6 +288,7 @@ reverse_repo/
 ├─ scripts/               # 执行器、状态机、门禁和PowerShell封装
 ├─ tests/                 # 独立单元测试
 ├─ docs/                  # 状态机说明及形式验证结果
+├─ dist/                  # 供匿名安装使用的校验发布包
 ├─ config/                # 示例配置；*.local.*不进入版本库
 ├─ reports/               # 本机运行证据，不进入版本库
 └─ logs/                  # 本机日志，不进入版本库
@@ -475,6 +490,12 @@ QMT本机路径、SMTP配置与密码、签名密钥、实盘启用快照和运�
 <a id="details-init"></a>
 
 ## 附录G：初始化器、Python与国内镜像
+
+快速开始中的一行PowerShell命令只负责取得`install.ps1`。安装器再从同一Gitee
+仓库的`raw/main/dist`下载发布包及SHA-256文件；两者无需Gitee账号。安装器仅
+接受空目标目录，并在解压前检查SHA-256、ZIP内部路径和关键入口文件。校验完成
+后才复制文件并调用`rr init`。因此普通用户不需要Git；Git克隆仅是开发者维护
+源码时的可选方式。
 
 `rr init`不使用QMT目录中的`python36.dll`。该文件是QMT内部嵌入式运行库，
 不是带有`python.exe`、`pip`和`venv`的完整Python发行版。初始化器安装仓库
