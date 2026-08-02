@@ -1,0 +1,44 @@
+{
+  "passed": true,
+  "python": "3.12.10",
+  "schema_version": 1,
+  "verification": {
+    "afternoon": {
+      "declared_phase_event_edges": 70,
+      "declared_states": 17,
+      "invariant_violations": 0,
+      "reachable_abstract_states": 59,
+      "reachable_transitions": 193,
+      "states_without_terminal_path": 0,
+      "terminal_abstract_states": 22,
+      "unreachable_states": 0,
+      "unreachable_transitions": 0
+    },
+    "execution_source_sha256": "8253ffc3c5587bc0e3969c2b34a305ba47d7a6ba2f8c16f6693ddf105aab5618",
+    "method": "exhaustive explicit-state reachability to fixed point",
+    "morning": {
+      "declared_phase_event_edges": 56,
+      "declared_states": 15,
+      "invariant_violations": 0,
+      "reachable_abstract_states": 49,
+      "reachable_transitions": 141,
+      "states_without_terminal_path": 0,
+      "terminal_abstract_states": 22,
+      "unreachable_states": 0,
+      "unreachable_transitions": 0
+    },
+    "proved_invariants": [
+      "submission requires verified environment and account",
+      "submission requires reconciled broker order snapshot",
+      "submission requires verified cash and fresh quote",
+      "external order requires a durable pre-submit intent",
+      "no completion state contains an unresolved order",
+      "an unresolved order cannot return to a ready state",
+      "a morning reprice requires terminal confirmation of the prior order",
+      "every reachable nonterminal state can reach a terminal state",
+      "every declared state and transition is reachable"
+    ],
+    "transition_spec_sha256": "310445a483f5fad759e782c1640c70300d82d13d3c0c5a0619708be222dccbf0"
+  },
+  "verified_at": "2026-08-02T10:43:30.675983+08:00"
+}

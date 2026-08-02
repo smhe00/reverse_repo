@@ -1,0 +1,2 @@
+# Production execution uses only Python's standard library plus XtQuant,
+# which must come from the installed miniQMT/QMT Python runtime.

@@ -1,0 +1,9 @@
+{
+  "python_path": ".venv\\Scripts\\python.exe",
+  "live_qmt_path": "D:\\券商QMT交易端\\userdata_mini",
+  "simulation_qmt_path": "D:\\券商QMT模拟端\\userdata_mini",
+  "first_execution_time": "09:30:42",
+  "second_execution_time": "15:10:00",
+  "first_cash_usage_ratio": 0.90,
+  "second_cash_usage_ratio": 1.00
+}
