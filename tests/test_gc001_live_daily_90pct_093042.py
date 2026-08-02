@@ -303,7 +303,10 @@ class MorningStateMachineExecutionTests(unittest.TestCase):
         self.assertEqual(manually_reduced, 500_000)
 
     def test_matching_callback_wakes_poll_but_foreign_callback_does_not(self):
-        signal = BrokerUpdateSignal(remark_prefix=REMARK_PREFIX_TODAY)
+        signal = BrokerUpdateSignal(
+            strategy_name=STRATEGY_NAME,
+            remark_prefix=REMARK_PREFIX_TODAY,
+        )
         signal.on_order(
             SimpleNamespace(
                 strategy_name="foreign",
@@ -337,6 +340,7 @@ class MorningStateMachineExecutionTests(unittest.TestCase):
                 order=OrderView.from_qmt(_order(status=50)),
                 xtdata=object(),
                 update_signal=BrokerUpdateSignal(
+                    strategy_name=STRATEGY_NAME,
                     remark_prefix=REMARK_PREFIX_TODAY
                 ),
                 execution_deadline=(
@@ -391,6 +395,7 @@ class MorningStateMachineExecutionTests(unittest.TestCase):
                     order=OrderView.from_qmt(active),
                     xtdata=object(),
                     update_signal=BrokerUpdateSignal(
+                        strategy_name=STRATEGY_NAME,
                         remark_prefix=REMARK_PREFIX_TODAY
                     ),
                     execution_deadline=(

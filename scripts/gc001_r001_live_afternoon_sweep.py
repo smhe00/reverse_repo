@@ -21,6 +21,7 @@ from repo_execution_core import (
     AccountBinding,
     AtomicJournal,
     BookPlan,
+    BrokerUpdateSignal,
     BrokerQueryAmbiguous,
     ExecutionMutex,
     ExecutionSafetyError,
@@ -73,10 +74,11 @@ SZ_CONTINUOUS_END = clock_time(15, 27, 0)
 HARD_STOP = clock_time(15, 30, 0)
 MORNING_SESSION_END = clock_time(11, 30, 0)
 AFTERNOON_SESSION_START = clock_time(13, 0, 0)
-MAXIMUM_QUOTE_AGE_SECONDS = 3.0
+MAXIMUM_QUOTE_AGE_SECONDS = 4.5
 ORDER_OBSERVE_SECONDS = 2.0
 CANCEL_CONFIRM_SECONDS = 15.0
-POLL_SECONDS = 0.20
+ORDER_STATUS_RECONCILE_SECONDS = 1.0
+CANCEL_STATUS_RECONCILE_SECONDS = 0.5
 NO_FUNDS_RECHECK_SECONDS = 1.0
 NO_BOOK_RECHECK_SECONDS = 0.25
 SUBMISSION_BACKOFF_SECONDS = 1.0
@@ -491,13 +493,25 @@ def run_afternoon(
         controller.apply(AfternoonEvent.BEGIN)
 
     from xtquant import xtconstant, xtdata, xttype
-    from xtquant.xttrader import XtQuantTrader
+    from xtquant.xttrader import XtQuantTrader, XtQuantTraderCallback
 
     xtdata.enable_hello = False
     trader: Any = None
     subscriptions: list[int] = []
     account: Any = None
     binding: AccountBinding | None = None
+    update_signal = BrokerUpdateSignal(
+        strategy_name=STRATEGY_NAME,
+        remark_prefix=remark_prefix,
+    )
+
+    class AfternoonPushCallback(XtQuantTraderCallback):
+        def on_stock_order(self, order: object) -> None:
+            update_signal.on_order(order)
+
+        def on_stock_trade(self, trade: object) -> None:
+            update_signal.on_trade(trade)
+
     try:
         if not is_exchange_trading_day(xtdata, trade_date):
             if controller.snapshot.state is AfternoonState.PREFLIGHT:
@@ -528,6 +542,7 @@ def run_afternoon(
         trader = XtQuantTrader(
             str(qmt_path),
             random.randint(100_000_000, 999_999_999),
+            AfternoonPushCallback(),
         )
         trader.start()
         connect_result = int(trader.connect())
@@ -601,6 +616,7 @@ def run_afternoon(
                 account=account,
                 controller=controller,
                 order=recovered,
+                update_signal=update_signal,
             ):
                 return 1
             _reconcile_filled_cash(
@@ -712,6 +728,7 @@ def run_afternoon(
                 account=account,
                 controller=controller,
                 order=order,
+                update_signal=update_signal,
             ):
                 return 1
             _reconcile_filled_cash(
@@ -1212,6 +1229,7 @@ def _finish_order_lifecycle(
     account: object,
     controller: AfternoonController,
     order: OrderView,
+    update_signal: BrokerUpdateSignal,
 ) -> bool:
     if controller.snapshot.state is AfternoonState.RECONCILE:
         return True
@@ -1221,6 +1239,7 @@ def _finish_order_lifecycle(
             account=account,
             controller=controller,
             order_id=order.order_id,
+            update_signal=update_signal,
         )
     deadline = time.monotonic() + ORDER_OBSERVE_SECONDS
     latest = order
@@ -1258,6 +1277,7 @@ def _finish_order_lifecycle(
                 account=account,
                 controller=controller,
                 order_id=latest.order_id,
+                update_signal=update_signal,
             )
         if classification is OrderClass.UNKNOWN:
             controller.halt(
@@ -1272,7 +1292,7 @@ def _finish_order_lifecycle(
                 data_updates={"current_order": latest.safe_payload()},
             )
             last_signature = signature
-        time.sleep(POLL_SECONDS)
+        update_signal.wait(ORDER_STATUS_RECONCILE_SECONDS)
 
     controller.apply(
         AfternoonEvent.CANCEL_REQUESTED,
@@ -1328,6 +1348,7 @@ def _finish_order_lifecycle(
         account=account,
         controller=controller,
         order_id=latest.order_id,
+        update_signal=update_signal,
     )
 
 
@@ -1337,6 +1358,7 @@ def _wait_cancel_terminal(
     account: object,
     controller: AfternoonController,
     order_id: int,
+    update_signal: BrokerUpdateSignal,
 ) -> bool:
     deadline = time.monotonic() + CANCEL_CONFIRM_SECONDS
     last_signature: tuple[int, int] | None = None
@@ -1372,7 +1394,7 @@ def _wait_cancel_terminal(
                 data_updates={"current_order": order.safe_payload()},
             )
             last_signature = signature
-        time.sleep(POLL_SECONDS)
+        update_signal.wait(CANCEL_STATUS_RECONCILE_SECONDS)
     controller.halt(
         event=AfternoonEvent.CANCEL_TIMEOUT,
         reason="cancel did not reach a terminal broker state",

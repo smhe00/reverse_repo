@@ -11,7 +11,6 @@ from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta
 from datetime import time as clock_time
 from pathlib import Path
-from queue import Empty, SimpleQueue
 from typing import Any
 
 from repo_execution_core import (
@@ -19,6 +18,7 @@ from repo_execution_core import (
     PRINCIPAL_STEP_YUAN,
     AccountBinding,
     AtomicJournal,
+    BrokerUpdateSignal,
     BookPlan,
     BrokerQueryAmbiguous,
     ExecutionMutex,
@@ -67,14 +67,15 @@ from repo_failure_alert import (
 TARGET_TIME = clock_time(9, 30, 42)
 MORNING_HARD_STOP_TIME = clock_time(9, 35, 0)
 CONNECT_LEAD_SECONDS = 60
-MAXIMUM_QUOTE_AGE_SECONDS = 3.0
+MAXIMUM_QUOTE_AGE_SECONDS = 4.5
 CASH_USAGE_RATIO = 0.90
 ORDER_REPRICE_CHECK_SECONDS = 5.0
 # 09:30:00 through 09:35:00 permits at most 60 five-second slots.
 # The extra slot is a fail-closed sanity ceiling, not a strategy stop.
 MAXIMUM_ORDER_ATTEMPTS = 61
 CANCEL_CONFIRM_SECONDS = 15.0
-POLL_SECONDS = 0.20
+ORDER_STATUS_RECONCILE_SECONDS = 1.0
+CANCEL_STATUS_RECONCILE_SECONDS = 0.5
 REMARK_PREFIX = "repo_morning_v2"
 STRATEGY_NAME = "gc001_daily_90pct_093042_state_machine_v2"
 
@@ -130,44 +131,6 @@ class MorningLimitPlan:
     limit_rate_percent: float
     quote_time: str
     quote_age_seconds: float
-
-
-class BrokerUpdateSignal:
-    """Wake the main loop for matching order/trade push events."""
-
-    def __init__(self, *, remark_prefix: str) -> None:
-        self.remark_prefix = str(remark_prefix)
-        self._queue: SimpleQueue[int] = SimpleQueue()
-
-    def on_order(self, order: object) -> None:
-        self._notify_if_owned(order)
-
-    def on_trade(self, trade: object) -> None:
-        self._notify_if_owned(trade)
-
-    def wait(self, timeout_seconds: float) -> bool:
-        try:
-            self._queue.get(timeout=max(float(timeout_seconds), 0.0))
-        except Empty:
-            return False
-        while True:
-            try:
-                self._queue.get_nowait()
-            except Empty:
-                return True
-
-    def _notify_if_owned(self, payload: object) -> None:
-        strategy = str(
-            getattr(payload, "strategy_name", "") or ""
-        )
-        remark = str(
-            getattr(payload, "order_remark", "") or ""
-        )
-        if (
-            strategy == STRATEGY_NAME
-            and remark.startswith(self.remark_prefix)
-        ):
-            self._queue.put(1)
 
 
 class MorningController:
@@ -510,7 +473,10 @@ def run_morning(
     quote_sequence = 0
     account: Any = None
     binding: AccountBinding | None = None
-    update_signal = BrokerUpdateSignal(remark_prefix=remark_prefix)
+    update_signal = BrokerUpdateSignal(
+        strategy_name=STRATEGY_NAME,
+        remark_prefix=remark_prefix,
+    )
 
     class MorningPushCallback(XtQuantTraderCallback):
         def on_stock_order(self, order: object) -> None:
@@ -1446,7 +1412,7 @@ def _finish_order_lifecycle(
                 time.monotonic() + ORDER_REPRICE_CHECK_SECONDS
             )
         wait_seconds = min(
-            POLL_SECONDS,
+            ORDER_STATUS_RECONCILE_SECONDS,
             max(next_reprice_check - time.monotonic(), 0.0),
             max(
                 (execution_deadline - datetime.now().astimezone())
@@ -1568,7 +1534,7 @@ def _wait_cancel_terminal(
                 data_updates={"current_order": order.safe_payload()},
             )
             last_signature = signature
-        update_signal.wait(POLL_SECONDS)
+        update_signal.wait(CANCEL_STATUS_RECONCILE_SECONDS)
     controller.halt(
         event=MorningEvent.CANCEL_TIMEOUT,
         reason="cancel did not reach a terminal broker state",

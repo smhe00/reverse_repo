@@ -93,8 +93,33 @@ class StressMetrics:
         self.query_latencies: dict[str, list[float]] = defaultdict(list)
         self.query_errors: dict[str, int] = defaultdict(int)
         self.tick_counts: dict[str, int] = defaultdict(int)
+        self.tick_unique_counts: dict[str, int] = defaultdict(int)
+        self.tick_duplicate_counts: dict[str, int] = defaultdict(int)
+        self.tick_missing_timestamp_counts: dict[str, int] = defaultdict(int)
+        self.tick_source_intervals_seconds: dict[str, list[float]] = (
+            defaultdict(list)
+        )
+        self.tick_arrival_age_seconds: dict[str, list[float]] = (
+            defaultdict(list)
+        )
         self.tick_timestamp_regressions: dict[str, int] = defaultdict(int)
         self.latest_tick_epoch_ms: dict[str, int] = {}
+        self.quote_poll_counts: dict[str, int] = defaultdict(int)
+        self.quote_poll_unique_counts: dict[str, int] = defaultdict(int)
+        self.quote_poll_duplicate_counts: dict[str, int] = defaultdict(int)
+        self.quote_poll_missing_timestamp_counts: dict[str, int] = (
+            defaultdict(int)
+        )
+        self.quote_poll_source_intervals_seconds: dict[str, list[float]] = (
+            defaultdict(list)
+        )
+        self.quote_poll_arrival_age_seconds: dict[str, list[float]] = (
+            defaultdict(list)
+        )
+        self.quote_poll_timestamp_regressions: dict[str, int] = (
+            defaultdict(int)
+        )
+        self.latest_quote_poll_epoch_ms: dict[str, int] = {}
         self.order_callbacks = 0
         self.trade_callbacks = 0
         self.disconnect_callbacks = 0
@@ -135,19 +160,78 @@ class StressMetrics:
             payload.get(symbol), Mapping
         ):
             payload = payload[symbol]
+        with self._lock:
+            self.tick_counts[symbol] += 1
+            self._record_quote_observation(
+                symbol=symbol,
+                payload=payload,
+                unique_counts=self.tick_unique_counts,
+                duplicate_counts=self.tick_duplicate_counts,
+                missing_counts=self.tick_missing_timestamp_counts,
+                interval_values=self.tick_source_intervals_seconds,
+                arrival_age_values=self.tick_arrival_age_seconds,
+                regressions=self.tick_timestamp_regressions,
+                latest_times=self.latest_tick_epoch_ms,
+            )
+
+    def record_quote_poll(self, payload: object) -> None:
+        if not isinstance(payload, Mapping):
+            return
+        with self._lock:
+            for symbol in QUOTE_SYMBOLS:
+                self.quote_poll_counts[symbol] += 1
+                self._record_quote_observation(
+                    symbol=symbol,
+                    payload=payload.get(symbol),
+                    unique_counts=self.quote_poll_unique_counts,
+                    duplicate_counts=self.quote_poll_duplicate_counts,
+                    missing_counts=self.quote_poll_missing_timestamp_counts,
+                    interval_values=(
+                        self.quote_poll_source_intervals_seconds
+                    ),
+                    arrival_age_values=self.quote_poll_arrival_age_seconds,
+                    regressions=self.quote_poll_timestamp_regressions,
+                    latest_times=self.latest_quote_poll_epoch_ms,
+                )
+
+    @staticmethod
+    def _record_quote_observation(
+        *,
+        symbol: str,
+        payload: object,
+        unique_counts: dict[str, int],
+        duplicate_counts: dict[str, int],
+        missing_counts: dict[str, int],
+        interval_values: dict[str, list[float]],
+        arrival_age_values: dict[str, list[float]],
+        regressions: dict[str, int],
+        latest_times: dict[str, int],
+    ) -> None:
         raw_time = 0
         if isinstance(payload, Mapping):
             try:
                 raw_time = int(payload.get("time") or 0)
             except (TypeError, ValueError):
                 raw_time = 0
-        with self._lock:
-            previous = self.latest_tick_epoch_ms.get(symbol, 0)
-            if raw_time and previous and raw_time < previous:
-                self.tick_timestamp_regressions[symbol] += 1
-            if raw_time:
-                self.latest_tick_epoch_ms[symbol] = max(previous, raw_time)
-            self.tick_counts[symbol] += 1
+        if raw_time <= 0:
+            missing_counts[symbol] += 1
+            return
+        arrival_age_values[symbol].append(
+            time.time() - raw_time / 1000.0
+        )
+        previous = latest_times.get(symbol, 0)
+        if previous and raw_time < previous:
+            regressions[symbol] += 1
+            return
+        if previous and raw_time == previous:
+            duplicate_counts[symbol] += 1
+            return
+        unique_counts[symbol] += 1
+        if previous:
+            interval_values[symbol].append(
+                (raw_time - previous) / 1000.0
+            )
+        latest_times[symbol] = raw_time
 
     def summary(self, *, expected_cycles: int) -> dict[str, object]:
         with self._lock:
@@ -190,10 +274,59 @@ class StressMetrics:
                     self.maximum_consecutive_query_failures
                 ),
                 "tick_counts": dict(self.tick_counts),
+                "tick_unique_counts": dict(self.tick_unique_counts),
+                "tick_duplicate_counts": dict(self.tick_duplicate_counts),
+                "tick_duplicate_ratio": _ratios(
+                    self.tick_duplicate_counts,
+                    self.tick_counts,
+                ),
+                "tick_missing_timestamp_counts": dict(
+                    self.tick_missing_timestamp_counts
+                ),
+                "tick_source_interval_seconds": {
+                    symbol: _distribution(values)
+                    for symbol, values in self.tick_source_intervals_seconds.items()
+                },
+                "tick_arrival_age_seconds": {
+                    symbol: _distribution(values)
+                    for symbol, values in self.tick_arrival_age_seconds.items()
+                },
                 "tick_timestamp_regressions": dict(
                     self.tick_timestamp_regressions
                 ),
                 "latest_tick_epoch_ms": dict(self.latest_tick_epoch_ms),
+                "quote_poll_counts": dict(self.quote_poll_counts),
+                "quote_poll_unique_counts": dict(
+                    self.quote_poll_unique_counts
+                ),
+                "quote_poll_duplicate_counts": dict(
+                    self.quote_poll_duplicate_counts
+                ),
+                "quote_poll_duplicate_ratio": _ratios(
+                    self.quote_poll_duplicate_counts,
+                    self.quote_poll_counts,
+                ),
+                "quote_poll_missing_timestamp_counts": dict(
+                    self.quote_poll_missing_timestamp_counts
+                ),
+                "quote_poll_source_interval_seconds": {
+                    symbol: _distribution(values)
+                    for symbol, values in (
+                        self.quote_poll_source_intervals_seconds.items()
+                    )
+                },
+                "quote_poll_arrival_age_seconds": {
+                    symbol: _distribution(values)
+                    for symbol, values in (
+                        self.quote_poll_arrival_age_seconds.items()
+                    )
+                },
+                "quote_poll_timestamp_regressions": dict(
+                    self.quote_poll_timestamp_regressions
+                ),
+                "latest_quote_poll_epoch_ms": dict(
+                    self.latest_quote_poll_epoch_ms
+                ),
                 "order_callbacks": self.order_callbacks,
                 "trade_callbacks": self.trade_callbacks,
                 "disconnect_callbacks": self.disconnect_callbacks,
@@ -207,6 +340,20 @@ class StressMetrics:
                     self.unresolved_stress_order_count
                 ),
             }
+
+
+def _ratios(
+    numerators: Mapping[str, int],
+    denominators: Mapping[str, int],
+) -> dict[str, float]:
+    return {
+        symbol: (
+            int(numerators.get(symbol, 0)) / int(count)
+            if int(count) > 0
+            else 0.0
+        )
+        for symbol, count in denominators.items()
+    }
 
 
 def _distribution(values: Sequence[float]) -> dict[str, float | int | None]:
@@ -666,9 +813,27 @@ def _evaluate(summary: Mapping[str, object]) -> tuple[bool, list[str]]:
     tick_counts = dict(summary.get("tick_counts") or {})
     if int(tick_counts.get(PRIMARY_SYMBOL, 0)) <= 0:
         failures.append("primary money-ETF tick callback was never observed")
+    tick_unique = dict(summary.get("tick_unique_counts") or {})
+    if int(tick_unique.get(PRIMARY_SYMBOL, 0)) <= 0:
+        failures.append("primary money-ETF produced no unique tick timestamp")
     regressions = dict(summary.get("tick_timestamp_regressions") or {})
     if sum(int(value) for value in regressions.values()) > 0:
         failures.append("tick timestamp regression was observed")
+    quote_polls = dict(summary.get("quote_poll_counts") or {})
+    if int(quote_polls.get(PRIMARY_SYMBOL, 0)) <= 0:
+        failures.append("primary money-ETF full-tick polling was never observed")
+    unique_quote_polls = dict(
+        summary.get("quote_poll_unique_counts") or {}
+    )
+    if int(unique_quote_polls.get(PRIMARY_SYMBOL, 0)) <= 0:
+        failures.append(
+            "primary money-ETF polling produced no unique quote timestamp"
+        )
+    poll_regressions = dict(
+        summary.get("quote_poll_timestamp_regressions") or {}
+    )
+    if sum(int(value) for value in poll_regressions.values()) > 0:
+        failures.append("polled quote timestamp regression was observed")
     completed = dict(summary.get("completed_round_trips") or {})
     if int(completed.get("money_etf", 0)) <= 0:
         failures.append("money-ETF T+0 round trip did not complete")
@@ -860,7 +1025,19 @@ def run_stress(args: argparse.Namespace) -> dict[str, object]:
             _, orders_error = _query_timed(
                 metrics, "orders", trader.query_stock_orders, account, False
             )
-            cycle_ok = asset_error is None and orders_error is None
+            quote_payload, quote_error = _query_timed(
+                metrics,
+                "full_tick",
+                xtdata.get_full_tick,
+                list(QUOTE_SYMBOLS),
+            )
+            if quote_error is None:
+                metrics.record_quote_poll(quote_payload)
+            cycle_ok = (
+                asset_error is None
+                and orders_error is None
+                and quote_error is None
+            )
             if cycle_number % 5 == 0:
                 _, positions_error = _query_timed(
                     metrics,

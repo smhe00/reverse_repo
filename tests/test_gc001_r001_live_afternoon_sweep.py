@@ -13,8 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from gc001_r001_live_afternoon_sweep import (  # noqa: E402
     CONNECT_TIME,
+    MAXIMUM_QUOTE_AGE_SECONDS,
     EXECUTION_TIME,
     HARD_STOP,
+    BrokerUpdateSignal,
     STRATEGY_NAME,
     AfternoonController,
     _market_break_resume_at,
@@ -197,6 +199,28 @@ class AfternoonRecoveryTests(unittest.TestCase):
         self.assertEqual(CONNECT_TIME.isoformat(), "15:09:00")
         self.assertEqual(HARD_STOP.isoformat(), "15:30:00")
         self.assertGreater(HARD_STOP, EXECUTION_TIME)
+        self.assertEqual(MAXIMUM_QUOTE_AGE_SECONDS, 4.5)
+
+    def test_matching_broker_callback_wakes_afternoon_executor(self):
+        prefix = "repo_afternoon_v2_20260731_"
+        signal = BrokerUpdateSignal(
+            strategy_name=STRATEGY_NAME,
+            remark_prefix=prefix,
+        )
+        signal.on_order(
+            SimpleNamespace(
+                strategy_name="foreign",
+                order_remark=f"{prefix}0001",
+            )
+        )
+        self.assertFalse(signal.wait(0.0))
+        signal.on_trade(
+            SimpleNamespace(
+                strategy_name=STRATEGY_NAME,
+                order_remark=f"{prefix}0001",
+            )
+        )
+        self.assertTrue(signal.wait(0.0))
 
     def _controller(
         self,

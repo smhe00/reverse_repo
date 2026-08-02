@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from pypdf import PdfReader
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
@@ -34,10 +35,60 @@ FONT_BOLD = Path(r"C:\Windows\Fonts\msyhbd.ttc")
 FONT_MONO = Path(r"C:\Windows\Fonts\consola.ttf")
 TABLE_DIVIDER = re.compile(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*$")
 LINK = re.compile(r"\[([^]]+)]\(([^)]+)\)")
+HEADING = re.compile(r"^(#{1,3})\s+(.+)$")
+
+
+class OutlineDocTemplate(SimpleDocTemplate):
+    """Create hierarchical PDF bookmarks from rendered Markdown headings."""
+
+    OUTLINE_LEVELS = {"H1CN": 0, "H2CN": 1, "H3CN": 2}
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._outline_index = 0
+        self._outline_started = False
+
+    def afterFlowable(self, flowable: object) -> None:
+        if not isinstance(flowable, Paragraph):
+            return
+        level = self.OUTLINE_LEVELS.get(flowable.style.name)
+        if level is None:
+            return
+        title = flowable.getPlainText().strip()
+        if not title:
+            return
+        if not self._outline_started:
+            self.canv.showOutline()
+            self._outline_started = True
+        self._outline_index += 1
+        key = f"readme-heading-{self._outline_index}"
+        self.canv.bookmarkPage(key)
+        self.canv.addOutlineEntry(
+            title,
+            key,
+            level=level,
+            closed=level > 0,
+        )
 
 
 def source_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def markdown_headings(source: str) -> list[tuple[str, int]]:
+    headings: list[tuple[str, int]] = []
+    in_code = False
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        match = HEADING.match(stripped)
+        if match is not None:
+            headings.append((match.group(2).strip(), len(match.group(1)) - 1))
+    return headings
 
 
 def register_fonts() -> None:
@@ -62,7 +113,8 @@ def inline_markup(value: str) -> str:
     value = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", value)
     value = re.sub(r"__([^_]+)__", r"<b>\1</b>", value)
     for index, (label, url) in enumerate(links):
-        replacement = html.escape(f"{label} ({url})", quote=False)
+        rendered = label if label == url else f"{label} ({url})"
+        replacement = html.escape(rendered, quote=False)
         value = value.replace(f"\x00LINK{index}\x00", replacement)
     return value
 
@@ -263,7 +315,7 @@ def markdown_story(source: str, styles: dict[str, ParagraphStyle], width: float)
             ]))
             story.extend([table, Spacer(1, 4 * mm)])
             continue
-        heading = re.match(r"^(#{1,3})\s+(.+)$", stripped)
+        heading = HEADING.match(stripped)
         if heading:
             flush_paragraph()
             level = len(heading.group(1))
@@ -311,7 +363,7 @@ def build_pdf(source_path: Path, output_path: Path, hash_path: Path) -> None:
         canvas.line(left, 13 * mm, page_width - right, 13 * mm)
         canvas.restoreState()
 
-    document = SimpleDocTemplate(
+    document = OutlineDocTemplate(
         str(output_path),
         pagesize=A4,
         rightMargin=right,
@@ -352,6 +404,33 @@ def check_pdf(source_path: Path, output_path: Path, hash_path: Path) -> None:
         )
     if output_path.stat().st_size < 10_000:
         raise SystemExit("README PDF is unexpectedly small or incomplete.")
+    reader = PdfReader(str(output_path))
+    page_mode = reader.trailer["/Root"].get("/PageMode")
+    if str(page_mode) != "/UseOutlines":
+        raise SystemExit("README PDF does not default to the bookmark sidebar.")
+
+    def flatten_outline(
+        items: list[object],
+        level: int = 0,
+    ) -> list[tuple[str, int]]:
+        entries: list[tuple[str, int]] = []
+        for item in items:
+            if isinstance(item, list):
+                entries.extend(flatten_outline(item, level + 1))
+                continue
+            title = getattr(item, "title", None)
+            if title is not None:
+                entries.append((str(title), level))
+        return entries
+
+    expected_outline = markdown_headings(
+        source_path.read_text(encoding="utf-8")
+    )
+    actual_outline = flatten_outline(reader.outline)
+    if actual_outline != expected_outline:
+        raise SystemExit(
+            "README PDF bookmark titles or levels do not match the Markdown headings."
+        )
 
 
 def main() -> int:

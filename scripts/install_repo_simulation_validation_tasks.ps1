@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [datetime]$ValidationDate = [datetime]"2026-08-03"
+    [datetime]$ValidationDate = [datetime]::MinValue
 )
 
 Set-StrictMode -Version Latest
@@ -9,6 +9,30 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Get-ReverseRepoRoot
 $morningExecution = Get-ReverseRepoMorningExecutionTime
 $afternoonExecution = Get-ReverseRepoAfternoonExecutionTime
+$now = Get-Date
+if ($ValidationDate -eq [datetime]::MinValue) {
+    $candidate = $now.Date
+    while (
+        $candidate.DayOfWeek -in @(
+            [DayOfWeek]::Saturday,
+            [DayOfWeek]::Sunday
+        ) `
+        -or $candidate.Add($morningExecution).AddSeconds(-7) -le $now
+    ) {
+        $candidate = $candidate.AddDays(1)
+    }
+    $ValidationDate = $candidate
+}
+$ValidationDate = $ValidationDate.Date
+if ($ValidationDate.DayOfWeek -in @(
+    [DayOfWeek]::Saturday,
+    [DayOfWeek]::Sunday
+)) {
+    throw (
+        "Simulation certification date must be a weekday: " +
+        $ValidationDate.ToString("yyyy-MM-dd")
+    )
+}
 $pwsh = (Get-Command "pwsh.exe" -ErrorAction Stop).Source
 $userId = (
     [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -46,7 +70,7 @@ $definitions = @(
 )
 
 foreach ($definition in $definitions) {
-    if ($definition.At -le (Get-Date)) {
+    if ($definition.At -le $now) {
         throw "Validation trigger is not in the future: $($definition.At)"
     }
     if (-not (Test-Path -LiteralPath $definition.Wrapper -PathType Leaf)) {

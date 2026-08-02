@@ -13,12 +13,48 @@ from datetime import date, datetime, timedelta, tzinfo
 from datetime import time as clock_time
 from enum import Enum
 from pathlib import Path
+from queue import Empty, SimpleQueue
 from typing import Any, Callable, TypeVar
 
 DEFAULT_FIRST_EXECUTION_TIME = "09:30:42"
 DEFAULT_SECOND_EXECUTION_TIME = "15:10:00"
 DEFAULT_FIRST_CASH_USAGE_RATIO = 0.90
 DEFAULT_SECOND_CASH_USAGE_RATIO = 1.0
+
+
+class BrokerUpdateSignal:
+    """Wake an executor when one of its broker orders changes."""
+
+    def __init__(self, *, strategy_name: str, remark_prefix: str) -> None:
+        self.strategy_name = str(strategy_name)
+        self.remark_prefix = str(remark_prefix)
+        self._queue: SimpleQueue[int] = SimpleQueue()
+
+    def on_order(self, order: object) -> None:
+        self._notify_if_owned(order)
+
+    def on_trade(self, trade: object) -> None:
+        self._notify_if_owned(trade)
+
+    def wait(self, timeout_seconds: float) -> bool:
+        try:
+            self._queue.get(timeout=max(float(timeout_seconds), 0.0))
+        except Empty:
+            return False
+        while True:
+            try:
+                self._queue.get_nowait()
+            except Empty:
+                return True
+
+    def _notify_if_owned(self, payload: object) -> None:
+        strategy = str(getattr(payload, "strategy_name", "") or "")
+        remark = str(getattr(payload, "order_remark", "") or "")
+        if (
+            strategy == self.strategy_name
+            and remark.startswith(self.remark_prefix)
+        ):
+            self._queue.put(1)
 
 
 def reverse_repo_strategy_config(

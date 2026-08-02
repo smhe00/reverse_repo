@@ -10,6 +10,10 @@ param(
         "ConfigureMail",
         "TestMail",
         "ResetCertificate",
+        "Cert",
+        "CertDisable",
+        "CertRemove",
+        "CertStatus",
         "Stress",
         "StressDisable",
         "StressRemove",
@@ -17,6 +21,7 @@ param(
         "Help"
     )]
     [string]$Action,
+    [string]$CertDate = "",
     [string]$StressDate = ""
 )
 
@@ -30,6 +35,11 @@ $managedTaskNames = @(
     "miniQMT Reverse Repo Second"
 )
 $stressTaskName = "miniQMT SIM Interface Stress 5Hz"
+$certTaskNames = @(
+    "miniQMT SIM Repo V2 First Recovery",
+    "miniQMT SIM Repo V2 Second",
+    "miniQMT SIM Repo V2 Certificate"
+)
 $obsoleteTaskNames = @(
     "miniQMT Reverse Repo Once",
     "miniQMT GC001 Daily 90pct 093042",
@@ -556,6 +566,165 @@ function Reset-SimulationCertificate {
     Write-Output "模拟证书已撤销并归档：$archivePath"
 }
 
+function Install-SimulationCertificationTasks {
+    foreach ($name in $managedTaskNames) {
+        $liveTask = Get-ScheduledTask `
+            -TaskName $name `
+            -ErrorAction SilentlyContinue
+        if (
+            $null -ne $liveTask `
+            -and [string]$liveTask.State -ne "Disabled"
+        ) {
+            throw (
+                "Live reverse-repo task is enabled: $name. " +
+                "Run .\rr off before scheduling simulation certification."
+            )
+        }
+    }
+    $scriptPath = Join-Path `
+        $PSScriptRoot `
+        "install_repo_simulation_validation_tasks.ps1"
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "Simulation certification installer is missing: $scriptPath"
+    }
+    if ([string]::IsNullOrWhiteSpace($CertDate)) {
+        & $scriptPath
+        return
+    }
+    try {
+        $parsedDate = [datetime]::ParseExact(
+            $CertDate,
+            "yyyy-MM-dd",
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+    }
+    catch [FormatException] {
+        throw "Certification date must use YYYY-MM-DD format."
+    }
+    & $scriptPath -ValidationDate $parsedDate
+}
+
+function Get-SimulationCertificationTaskStatus {
+    foreach ($name in $certTaskNames) {
+        $task = Get-ScheduledTask `
+            -TaskName $name `
+            -ErrorAction SilentlyContinue
+        if ($null -eq $task) {
+            [pscustomobject]@{
+                TaskName = $name
+                Installed = $false
+                State = "NotInstalled"
+                Trigger = $null
+                NextRunTime = $null
+                LastRunTime = $null
+                LastResult = $null
+            }
+            continue
+        }
+        $info = Get-ScheduledTaskInfo -TaskName $name
+        $isDisabled = ([string]$task.State -eq "Disabled")
+        $hasNeverRun = (
+            [int64]$info.LastTaskResult -eq 267011 `
+            -or $info.LastRunTime.Year -lt 2000
+        )
+        [pscustomobject]@{
+            TaskName = $name
+            Installed = $true
+            State = [string]$task.State
+            Trigger = $task.Triggers[0].StartBoundary
+            NextRunTime = if ($isDisabled) {
+                "已撤销，不会运行"
+            }
+            elseif ($info.NextRunTime -le [datetime]::MinValue) {
+                "没有后续计划"
+            }
+            else {
+                $info.NextRunTime
+            }
+            LastRunTime = if ($hasNeverRun) {
+                "尚未运行"
+            }
+            else {
+                $info.LastRunTime
+            }
+            LastResult = Format-TaskResult `
+                -Result ([int64]$info.LastTaskResult)
+        }
+    }
+}
+
+function Disable-SimulationCertificationTasks {
+    $installed = @(
+        foreach ($name in $certTaskNames) {
+            $task = Get-ScheduledTask `
+                -TaskName $name `
+                -ErrorAction SilentlyContinue
+            if ($null -ne $task) {
+                $task
+            }
+        }
+    )
+    if ($installed.Count -eq 0) {
+        Write-Output "模拟能力认证任务未安装，无需撤销。"
+        return
+    }
+    $running = @(
+        $installed | Where-Object { [string]$_.State -eq "Running" }
+    )
+    if ($running.Count -gt 0) {
+        throw (
+            "A simulation certification task is already running. " +
+            "Refusing abrupt termination."
+        )
+    }
+    foreach ($task in $installed) {
+        if ($PSCmdlet.ShouldProcess(
+            $task.TaskName,
+            "Disable one-time simulation certification task"
+        )) {
+            Disable-ScheduledTask -TaskName $task.TaskName | Out-Null
+        }
+    }
+    Get-SimulationCertificationTaskStatus
+}
+
+function Remove-SimulationCertificationTasks {
+    $installed = @(
+        foreach ($name in $certTaskNames) {
+            $task = Get-ScheduledTask `
+                -TaskName $name `
+                -ErrorAction SilentlyContinue
+            if ($null -ne $task) {
+                $task
+            }
+        }
+    )
+    if ($installed.Count -eq 0) {
+        Write-Output "模拟能力认证任务未安装，无需删除。"
+        return
+    }
+    $running = @(
+        $installed | Where-Object { [string]$_.State -eq "Running" }
+    )
+    if ($running.Count -gt 0) {
+        throw (
+            "A simulation certification task is already running. " +
+            "Refusing abrupt termination."
+        )
+    }
+    foreach ($task in $installed) {
+        if ($PSCmdlet.ShouldProcess(
+            $task.TaskName,
+            "Delete one-time simulation certification task"
+        )) {
+            Unregister-ScheduledTask `
+                -TaskName $task.TaskName `
+                -Confirm:$false
+        }
+    }
+    Get-SimulationCertificationTaskStatus
+}
+
 function Install-SimulationStressTask {
     $scriptPath = Join-Path `
         $PSScriptRoot `
@@ -678,40 +847,49 @@ function Show-ReverseRepoTaskHelp {
     @"
 rr - miniQMT 逆回购自动任务管理工具
 
-用途：
-  管理以下两个 Windows 任务计划程序任务：
-
-  1. 第一次 GC001 策略
-     $firstStartText 启动，$firstExecutionText 按实时买一借出
-     可用资金的 $firstCashUsagePercent，最长尝试5分钟或至当前交易时段结束；
-     比例为0时该任务保持禁用。
-
-  2. 第二次 GC001 / R-001 兜底策略
-     $secondStartText 启动，$secondExecutionText 查询实时剩余资金，按整笔五档预计
-     成交年化择优借出 GC001 或 R-001，目标为首次有效资金快照的
-     $secondCashUsagePercent；比例为0时该任务保持禁用。
-
-命令：
-  .\rr add
-      安装或更新上述两个任务；安装完成后保持禁用。
-      可重复执行；不会产生当天委托。
-      如果存在旧版固定参数任务，会先禁用并删除，避免重复执行。
-
-  .\rr del
-      从 Windows 任务计划程序删除上述两个新任务。
-      不删除策略代码、日志、报告，也不删除其他 Windows 任务。
-
+【实盘任务：关键命令】
   .\rr stat
-      显示任务是否安装、当前状态、计划时间、下一次运行时间、
-      最近运行时间及最近返回结果。
-
-  .\rr on
-      通过形式验证、账户绑定和模拟能力证书门禁后，为当前时间与资金比例
-      创建签名启用快照，仅启用资金比例大于0的任务。如果任务尚未安装，
-      请先执行 .\rr add。
+      首先查看两项实盘任务、策略参数、调度时间和最近结果。
 
   .\rr off
-      撤销启用快照并暂停两个任务，但保留任务配置；之后可用 .\rr on 恢复。
+      撤销实盘启用快照并禁用两个任务，但保留任务定义。
+
+  .\rr on
+      通过本地验证、账户绑定和模拟能力证书门禁后创建签名启用快照，
+      仅启用资金比例大于0的任务。任务尚未安装时先执行 .\rr add。
+
+  .\rr add
+      安装或更新两个实盘任务；安装完成后保持Disabled，不会立即交易。
+
+  .\rr del
+      删除两个实盘任务，不删除代码、日志、报告或模拟任务。
+
+  当前实盘参数：
+    第一次：$firstStartText 启动，$firstExecutionText 执行GC001，
+            使用 $firstCashUsagePercent 可用资金，最多尝试5分钟。
+    第二次：$secondStartText 启动，$secondExecutionText 扫描GC001/R-001，
+            使用 $secondCashUsagePercent 的首次有效资金快照。
+
+【模拟能力认证：实盘前必须完成】
+  .\rr cert [YYYY-MM-DD]
+      部署一个完整交易日的三项模拟认证任务。省略日期时自动选择下一个
+      可完整执行的工作日；指定日期只接受YYYY-MM-DD。部署前必须 rr off。
+
+  .\rr cert stat | off | del
+      stat查看三项认证任务；off在未运行时撤销后续调度；del删除任务定义。
+      任务正在运行时拒绝强制终止。成功证书由15:31任务自动签发。
+
+  .\rr reset
+      撤销并归档当前模拟能力证书。之后必须重新执行 rr cert，才能启用实盘。
+
+【一次性模拟压力测试：不替代能力认证】
+  .\rr stress [YYYY-MM-DD]
+      部署模拟账户5Hz全链路压力测试。省略日期时自动选择工作日。
+
+  .\rr stress stat | off | del
+      查看、撤销或删除压力任务；运行中拒绝强制终止。
+
+【邮件与帮助】
 
   .\rr mail
       可选：配置故障告警邮箱。SMTP 密码由 Windows 当前用户加密保存，
@@ -719,19 +897,6 @@ rr - miniQMT 逆回购自动任务管理工具
 
   .\rr mt
       使用已保存的加密配置发送一封测试邮件，不重新输入密码。
-
-  .\rr reset
-      手动撤销模拟证书并移入本机归档目录。撤销后必须重新完成
-      模拟验证，才能再次启用实盘任务。
-
-  .\rr stress [YYYY-MM-DD]
-      部署一次性的5Hz全链路压力测试任务。省略日期时选择下一个可完整
-      执行的工作日；指定日期仅接受YYYY-MM-DD。任务固定使用模拟miniQMT
-      路径和模拟账户绑定，任何环境或账户核验失败都会在下单前停止。
-
-  .\rr stress stat | off | del
-      stat查看一次性任务；off在执行前撤销调度但保留任务；del彻底删除。
-      已经运行时拒绝强制终止，避免跳过模拟委托撤销和持仓清理。
 
   .\rr help
       显示本帮助。直接运行 .\rr 也会显示本帮助。
@@ -777,6 +942,18 @@ switch ($Action) {
     }
     "ResetCertificate" {
         Reset-SimulationCertificate
+    }
+    "Cert" {
+        Install-SimulationCertificationTasks
+    }
+    "CertDisable" {
+        Disable-SimulationCertificationTasks
+    }
+    "CertRemove" {
+        Remove-SimulationCertificationTasks
+    }
+    "CertStatus" {
+        Get-SimulationCertificationTaskStatus
     }
     "Stress" {
         Install-SimulationStressTask

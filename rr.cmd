@@ -39,6 +39,20 @@ if /I "%~1"=="reset" (
     pwsh -NoProfile -File "%MANAGER%" -Action ResetCertificate
     exit /b !ERRORLEVEL!
 )
+if /I "%~1"=="cert" (
+    if /I "%~2"=="off" (
+        pwsh -NoProfile -File "%MANAGER%" -Action CertDisable
+    ) else if /I "%~2"=="del" (
+        pwsh -NoProfile -File "%MANAGER%" -Action CertRemove
+    ) else if /I "%~2"=="stat" (
+        pwsh -NoProfile -File "%MANAGER%" -Action CertStatus
+    ) else if "%~2"=="" (
+        pwsh -NoProfile -File "%MANAGER%" -Action Cert
+    ) else (
+        pwsh -NoProfile -File "%MANAGER%" -Action Cert -CertDate "%~2"
+    )
+    exit /b !ERRORLEVEL!
+)
 if /I "%~1"=="stress" (
     if /I "%~2"=="off" (
         pwsh -NoProfile -File "%MANAGER%" -Action StressDisable
