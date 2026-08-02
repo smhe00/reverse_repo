@@ -36,6 +36,9 @@ $runtimeDirectory = Join-Path $repoRoot ".runtime\python312"
 $runtimePython = Join-Path $runtimeDirectory "python.exe"
 $venvDirectory = Join-Path $repoRoot ".venv"
 $venvPython = Join-Path $venvDirectory "Scripts\python.exe"
+$dependencyStatePath = Join-Path `
+    $venvDirectory `
+    "reverse_repo_dependencies.json"
 $runtimeConfigPath = Join-Path $repoRoot "config\runtime.local.json"
 $requirementsPath = Join-Path $repoRoot "requirements.txt"
 $bootstrapDirectory = Join-Path $repoRoot "tmp\bootstrap"
@@ -149,9 +152,7 @@ function Get-VerifiedRemoteFile {
                 -Headers @{ "Cache-Control" = "no-cache" } `
                 -TimeoutSec 300
             $actualSize = (Get-Item -LiteralPath $Path).Length
-            $actualHash = (
-                Get-FileHash -LiteralPath $Path -Algorithm SHA256
-            ).Hash.ToLowerInvariant()
+            $actualHash = Get-ReverseRepoSha256 -Path $Path
             if (
                 [long]$actualSize -ne $ExpectedSize -or
                 $actualHash -ne $ExpectedSha256.ToLowerInvariant()
@@ -327,6 +328,119 @@ function Install-PortablePython {
     Assert-PythonExecutable -PythonPath $runtimePython
 }
 
+function Get-RequirementsSha256 {
+    return (Get-ReverseRepoSha256 -Path $requirementsPath)
+}
+
+function Test-VirtualEnvironmentReady {
+    if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+        return $false
+    }
+    $requirementsHash = Get-RequirementsSha256
+    if (Test-Path -LiteralPath $dependencyStatePath -PathType Leaf) {
+        try {
+            $state = Read-ReverseRepoJson -Path $dependencyStatePath
+            if (
+                [int]$state.schema_version -ne 1 `
+                -or [string]$state.python_version -ne $pythonVersion `
+                -or [string]$state.requirements_sha256 -ne $requirementsHash
+            ) {
+                return $false
+            }
+        }
+        catch {
+            return $false
+        }
+    }
+
+    # The marker may be absent on environments created by an older release.
+    # Prove the current pinned requirement and imports locally before adopting
+    # that environment; no package index or network connection is consulted.
+    $requirements = @(
+        [System.IO.File]::ReadAllLines(
+            $requirementsPath,
+            [System.Text.Encoding]::UTF8
+        ) |
+            ForEach-Object { ($_ -split "#", 2)[0].Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    $pinnedRequirements = @()
+    foreach ($requirement in $requirements) {
+        if (
+            $requirement -notmatch `
+                "^([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+!-]+)$"
+        ) {
+            return $false
+        }
+        $pinnedRequirements += [pscustomobject]@{
+            Name = [string]$Matches[1]
+            Version = [string]$Matches[2]
+        }
+    }
+    if (
+        @($pinnedRequirements | Where-Object { $_.Name -ieq "xtquant" }).Count `
+            -ne 1
+    ) {
+        return $false
+    }
+    $probe = (
+        "import struct,sys; " +
+        "assert sys.version_info[:3]==(3,12,10); " +
+        "assert struct.calcsize('P')*8==64; " +
+        "from xtquant import xtconstant,xtdata,xttype; " +
+        "from xtquant.xttrader import XtQuantTrader"
+    )
+    $versionProbe = (
+        "import importlib.metadata as m,sys; " +
+        "assert m.version(sys.argv[1])==sys.argv[2]"
+    )
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        & $venvPython -c $probe 1>$null 2>$null
+        $probeExitCode = $LASTEXITCODE
+        $pinnedVersionsValid = $true
+        foreach ($requirement in $pinnedRequirements) {
+            & $venvPython -c `
+                $versionProbe `
+                $requirement.Name `
+                $requirement.Version `
+                1>$null 2>$null
+            if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+                $pinnedVersionsValid = $false
+                break
+            }
+        }
+        & $venvPython -m pip check 1>$null 2>$null
+        $pipCheckExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
+    if (
+        $null -eq $probeExitCode `
+        -or [int]$probeExitCode -ne 0 `
+        -or -not $pinnedVersionsValid `
+        -or $null -eq $pipCheckExitCode `
+        -or [int]$pipCheckExitCode -ne 0
+    ) {
+        return $false
+    }
+    return $true
+}
+
+function Save-VirtualEnvironmentState {
+    $state = [ordered]@{
+        schema_version = 1
+        python_version = $pythonVersion
+        requirements_sha256 = (Get-RequirementsSha256)
+        verified_at = (Get-Date).ToString("o")
+    }
+    Write-Utf8NoBom `
+        -Path $dependencyStatePath `
+        -Text ($state | ConvertTo-Json -Depth 3)
+}
+
 function Install-VirtualEnvironment {
     if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
         if (
@@ -344,6 +458,14 @@ function Install-VirtualEnvironment {
         }
     }
     Assert-PythonExecutable -PythonPath $venvPython
+
+    if (Test-VirtualEnvironmentReady) {
+        if (-not (Test-Path -LiteralPath $dependencyStatePath -PathType Leaf)) {
+            Save-VirtualEnvironmentState
+        }
+        Write-Output "本地Python依赖完整且版本匹配，跳过联网安装。"
+        return
+    }
 
     $orderedMirrors = Get-ReachableMirrors `
         -Mirrors $pipMirrors `
@@ -387,6 +509,11 @@ function Install-VirtualEnvironment {
         throw "Installing dependencies from domestic PyPI mirrors failed."
     }
     Assert-PythonExecutable -PythonPath $venvPython -RequireXtQuant
+    & $venvPython -m pip check
+    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+        throw "Installed Python dependencies are inconsistent."
+    }
+    Save-VirtualEnvironmentState
 }
 
 function Get-RunningMiniQmtInstallRoot {

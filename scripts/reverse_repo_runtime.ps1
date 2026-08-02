@@ -39,6 +39,32 @@ function Read-ReverseRepoJson {
     }
 }
 
+function Get-ReverseRepoSha256 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Hash input file is missing: $Path"
+    }
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $digest = $sha256.ComputeHash($stream)
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+    return ([System.BitConverter]::ToString($digest)).Replace(
+        "-",
+        ""
+    ).ToLowerInvariant()
+}
+
 function Get-ReverseRepoRuntimeConfig {
     if ($null -ne $script:ReverseRepoRuntimeConfig) {
         return $script:ReverseRepoRuntimeConfig

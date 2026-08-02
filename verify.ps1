@@ -43,10 +43,13 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Windows PowerShell UTF-8 JSON verification failed."
 }
-& $windowsPowerShell `
-    -NoProfile `
-    -ExecutionPolicy Bypass `
-    -File (Join-Path $bundleRoot "tests\test_portable_python_runtime.ps1")
+$portableRuntimeArguments = @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", (Join-Path $bundleRoot "tests\test_portable_python_runtime.ps1"),
+    "-UseExistingRuntime"
+)
+& $windowsPowerShell @portableRuntimeArguments
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Portable Python isolation verification failed."
 }
@@ -106,9 +109,7 @@ if (-not (Test-Path -LiteralPath $readmePdfPath -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $readmePdfHashPath -PathType Leaf)) {
     throw "README PDF hash is missing. Run .\build_readme_pdf.ps1."
 }
-$expectedReadmeHash = (
-    Get-FileHash -LiteralPath $readmePath -Algorithm SHA256
-).Hash.ToLowerInvariant()
+$expectedReadmeHash = Get-ReverseRepoSha256 -Path $readmePath
 $actualReadmeHash = (
     Get-Content -LiteralPath $readmePdfHashPath -Raw
 ).Trim().ToLowerInvariant()

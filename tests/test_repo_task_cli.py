@@ -46,6 +46,36 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertNotIn("https://www.python.org/ftp", initializer)
         self.assertNotIn("gitee.com/smhe/reverse_repo/raw/main/dist", initializer)
 
+    def test_repeated_initialization_skips_healthy_python_dependencies(self):
+        initializer = (
+            ROOT / "scripts" / "initialize_reverse_repo.ps1"
+        ).read_text(encoding="utf-8-sig")
+        runtime = (
+            ROOT / "scripts" / "reverse_repo_runtime.ps1"
+        ).read_text(encoding="utf-8-sig")
+        ready = initializer.index("if (Test-VirtualEnvironmentReady)")
+        mirrors = initializer.index(
+            "$orderedMirrors = Get-ReachableMirrors",
+            ready,
+        )
+        self.assertLess(ready, mirrors)
+        self.assertIn("reverse_repo_dependencies.json", initializer)
+        self.assertIn("requirements_sha256", initializer)
+        self.assertIn("-m pip check", initializer)
+        self.assertIn("跳过联网安装", initializer)
+        self.assertIn("Save-VirtualEnvironmentState", initializer)
+        self.assertIn("function Get-ReverseRepoSha256", runtime)
+        self.assertNotIn("Get-FileHash", initializer)
+
+    def test_local_verification_reuses_existing_portable_runtime(self):
+        verifier = (ROOT / "verify.ps1").read_text(encoding="utf-8-sig")
+        portable_test = (
+            ROOT / "tests" / "test_portable_python_runtime.ps1"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn('"-UseExistingRuntime"', verifier)
+        self.assertIn("param([switch]$UseExistingRuntime)", portable_test)
+        self.assertIn("-not $UseExistingRuntime", portable_test)
+
     def test_python_runtime_is_not_bundled_in_current_tree(self):
         bundled = list((ROOT / "dist").glob("python-3.12.10-portable*"))
         self.assertEqual(bundled, [])

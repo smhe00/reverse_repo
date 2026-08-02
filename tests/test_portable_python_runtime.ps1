@@ -1,4 +1,7 @@
-﻿Set-StrictMode -Version Latest
+﻿[CmdletBinding()]
+param([switch]$UseExistingRuntime)
+
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -37,7 +40,10 @@ try {
     )
     $registrationBefore = Get-PythonRegistrationSnapshot
 
-    if (Test-Path -LiteralPath (Join-Path $repoRoot ".git")) {
+    if (
+        -not $UseExistingRuntime `
+        -and (Test-Path -LiteralPath (Join-Path $repoRoot ".git"))
+    ) {
         # A maintainer checkout exercises the same domestic download that a
         # new installation uses. The pinned hash is the CPython release hash.
         $packagePath = Join-Path $testRoot "python-3.12.10-amd64.zip"
