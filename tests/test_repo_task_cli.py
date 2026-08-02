@@ -169,7 +169,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertLess(quick, commands)
         self.assertLess(commands, configuration)
         self.assertGreater(long_command, maintenance)
-        for number in range(1, 7):
+        for number in range(1, 8):
             self.assertIn(f'<a id="quick-step-{number}"></a>', readme)
         self.assertIn("#details-config", readme)
         self.assertIn("#details-validation", readme)
@@ -177,6 +177,29 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("#details-strategy", readme)
         self.assertIn("#details-init", readme)
         self.assertIn(".\\rr cert stat", readme)
+
+    def test_quick_start_requires_manual_config_review_before_validation(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        quick = readme[
+            readme.index("## 快速开始（Getting Started）"):
+            readme.index("## 命令参考（熟悉流程后使用）")
+        ]
+        manual = quick.index("第3步：人工检查并修改策略参数（必做）")
+        validation = quick.index("第4步：应用配置并完成本地验证")
+        certification = quick.index("第5步：用模拟账户完成一个交易日认证")
+        self.assertLess(manual, validation)
+        self.assertLess(validation, certification)
+        self.assertIn("notepad .\\config\\runtime.local.json", quick)
+        self.assertIn("必须由人打开配置文件", quick)
+        for field in (
+            "first_execution_time",
+            "first_cash_usage_ratio",
+            "second_execution_time",
+            "second_cash_usage_ratio",
+        ):
+            self.assertIn(field, quick)
+        self.assertIn("verify.ps1`失败时应先修正配置，不能继续", quick)
+        self.assertIn("此时必须停下来，由人逐项核对", quick)
 
     def test_readme_offers_no_git_single_command_install(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

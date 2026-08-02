@@ -24,7 +24,7 @@
 <a id="quick-start"></a>
 ## 快速开始（Getting Started）
 
-所有命令都在`reverse_repo`目录执行。第一次使用只需按下面6步操作；背景原理和
+所有命令都在`reverse_repo`目录执行。第一次使用只需按下面7步操作；背景原理和
 故障排查放在后文，需要时再点链接查看。完成模拟认证前不要执行`rr on`。
 
 ### 操作流程简图
@@ -34,11 +34,13 @@
           ↓
 空目录执行一条安装命令
           ↓
-rr stat → verify.ps1
+人工检查并修改 config\runtime.local.json
+          ↓
+verify.ps1 → rr add → rr stat
           ↓
 rr cert → 完成一个交易日模拟认证
           ↓
-rr on → 启用实盘
+人工复核参数 → rr on 启用实盘
           ↓
 rr off / del / clear → 按需停止或删除任务
 ```
@@ -69,20 +71,44 @@ irm https://gitee.com/smhe/reverse_repo/raw/main/install.ps1 | iex
 详细说明：[策略参数](#details-config)、[初始化器安全边界](#details-init)。
 
 <a id="quick-step-3"></a>
-### 第3步：检查配置并完成本地验证
+### 第3步：人工检查并修改策略参数（必做）
+
+`rr init`写入的是默认策略，不代表适合当前账户。必须由人打开配置文件：
 
 ```powershell
-.\rr stat
-.\verify.ps1
+notepad .\config\runtime.local.json
 ```
 
-确认两项任务均为`Disabled`、`ScheduleMatchesConfig=True`，且本地验证通过。
-不一致时执行`.\rr add`后重查，不要直接启用。
+逐项确认或修改下面四项；即使接受默认值，也必须人工看过：
+
+| 配置项 | 默认值 | 人工确认内容 |
+|---|---:|---|
+| `first_execution_time` | `09:30:42` | 第一次执行时间是否符合预期 |
+| `first_cash_usage_ratio` | `0.90` | 第一次使用多少可用资金；`0`表示不执行 |
+| `second_execution_time` | `15:10:00` | 第二次执行时间是否符合预期 |
+| `second_cash_usage_ratio` | `1.00` | 第二次使用多少可用资金；`0`表示不执行 |
+
+保存文件后再进入下一步。时间范围、两次间隔及比例限制参见
+[策略配置](#details-config)；不要凭猜测填写。程序只能检查格式、范围和安全门禁，
+无法判断时间与资金比例是否符合使用者的真实意图，这一步不能由自动验证代替。
+
+<a id="quick-step-4"></a>
+### 第4步：应用配置并完成本地验证
+
+```powershell
+.\rr off
+.\verify.ps1
+.\rr add
+.\rr stat
+```
+
+`verify.ps1`失败时应先修正配置，不能继续。最后确认输出中的四项参数与人工设定
+完全一致、两项任务均为`Disabled`且`ScheduleMatchesConfig=True`。
 
 详细说明：[配置范围](#details-config)、[验证层次](#details-validation)。
 
-<a id="quick-step-4"></a>
-### 第4步：用模拟账户完成一个交易日认证
+<a id="quick-step-5"></a>
+### 第5步：用模拟账户完成一个交易日认证
 
 ```powershell
 .\rr off
@@ -96,24 +122,29 @@ irm https://gitee.com/smhe/reverse_repo/raw/main/install.ps1 | iex
 详细说明：[认证耗时与失效条件](#details-validation)。压力测试不是认证必需步骤，
 需要时参见[一次性接口压力测试](#details-stress)。
 
-<a id="quick-step-5"></a>
-### 第5步：人工复核后启用实盘
+<a id="quick-step-6"></a>
+### 第6步：最后一次人工复核后启用实盘
 
 启动并登录实盘miniQMT，然后执行：
 
 ```powershell
 .\rr stat
+```
+
+此时必须停下来，由人逐项核对：实盘账户环境、第一次时间和资金比例、第二次
+时间和资金比例、两项任务调度。全部符合预期后，才执行：
+
+```powershell
 .\rr on
 .\rr stat
 ```
 
-确认两次执行时间和资金比例正确后再执行`rr on`。启用后，比例大于`0`的阶段
-应为`Ready`；比例为`0`的阶段仍为`Disabled`。
+启用后，比例大于`0`的阶段应为`Ready`；比例为`0`的阶段仍为`Disabled`。
 
 详细说明：[实盘安全与运维](#details-operations)、[执行器实际动作](#details-strategy)。
 
-<a id="quick-step-6"></a>
-### 第6步：日常运行、停止与修改
+<a id="quick-step-7"></a>
+### 第7步：日常运行、停止与修改
 
 - 正常运行：保持Windows用户和实盘miniQMT登录。
 - 暂停实盘：`.\rr off`；只删除两项实盘任务：`.\rr del`。
@@ -129,9 +160,9 @@ irm https://gitee.com/smhe/reverse_repo/raw/main/install.ps1 | iex
 
 | 命令 | 用途 | 与相近命令的差别 |
 |---|---|---|
-| `.\rr init` | 初始化当前目录、独立Python环境、配置与账户绑定 | 新机器首次使用；本地运行环境不存在时会下载Python，但不启用实盘 |
+| `.\rr init` | 初始化当前目录、独立Python环境、默认配置与账户绑定 | 新机器首次使用；可能下载Python但不启用实盘，完成后必须人工检查配置 |
 | `.\rr stat` | 查看参数、两项实盘任务、调度与最近结果 | 只读，不修改任何任务 |
-| `.\rr on` | 通过门禁后启用资金比例大于`0`的实盘任务 | 只启用，不创建缺失任务；缺失或不匹配时先用`add` |
+| `.\rr on` | 通过门禁后启用资金比例大于`0`的实盘任务 | 只启用，不代替人工参数确认；缺失或不匹配时先用`add` |
 | `.\rr off` | 立即禁止两项实盘任务的后续触发 | **保留任务定义**，以后可再次`on`；不影响模拟和压力任务 |
 | `.\rr add` | 安装或更新两项实盘任务 | 完成后仍为`Disabled`，不会自动启用 |
 | `.\rr del` | 删除两项实盘任务 | **删除实盘任务定义**；不影响模拟认证、压力或只读任务 |
@@ -163,6 +194,9 @@ irm https://gitee.com/smhe/reverse_repo/raw/main/install.ps1 | iex
 
 编辑本机文件`config/runtime.local.json`：
 
+这是本机实盘策略授权参数。首次`rr init`后以及每次准备修改策略时，都必须由人
+确认四项值；`verify.ps1`通过只代表配置合法，不代表配置符合使用者意图。
+
 | 配置项 | 默认值 | 允许范围 | 含义 |
 |---|---:|---:|---|
 | `first_execution_time` | `09:30:42` | `09:30:00–11:28:00`或`13:00:00–15:28:00` | 第一次开始取行情并尝试借出 |
@@ -174,7 +208,8 @@ irm https://gitee.com/smhe/reverse_repo/raw/main/install.ps1 | iex
 其他时间；不合法配置会让`verify.ps1`、`rr add`和`rr on`直接失败。负数、
 大于`1`、非数字、`NaN`和无穷大的资金比例均会在连接miniQMT前被拒绝。
 
-对应快速开始：[第2步初始化](#quick-step-2)、[第3步本地验证](#quick-step-3)。
+对应快速开始：[第2步初始化](#quick-step-2)、[第3步人工确认](#quick-step-3)、
+[第4步本地验证](#quick-step-4)。
 
 <a id="details-validation"></a>
 
@@ -237,7 +272,8 @@ irm https://gitee.com/smhe/reverse_repo/raw/main/install.ps1 | iex
 能力证书绑定两项执行时间、状态机、执行与门禁源码以及XtQuant运行时；资金比例
 不属于全日能力证书。
 
-对应快速开始：[第3步本地验证](#quick-step-3)、[第4步模拟认证](#quick-step-4)。
+对应快速开始：[第3步人工确认](#quick-step-3)、[第4步本地验证](#quick-step-4)、
+[第5步模拟认证](#quick-step-5)。
 
 <a id="details-operations"></a>
 
@@ -262,7 +298,7 @@ irm https://gitee.com/smhe/reverse_repo/raw/main/install.ps1 | iex
 的当日日志或旧机器的模拟证书。迁移后必须重新检查miniQMT路径、账户绑定、
 XtQuant运行时和Windows任务状态；SMTP告警如需使用，应在新机器重新配置。
 
-对应快速开始：[第5步启用实盘](#quick-step-5)、[第6步日常运维](#quick-step-6)。
+对应快速开始：[第6步启用实盘](#quick-step-6)、[第7步日常运维](#quick-step-7)。
 
 <a id="details-directory"></a>
 
