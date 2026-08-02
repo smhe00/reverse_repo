@@ -106,6 +106,31 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("-Action CertDisable", command)
         self.assertIn("-Action CertRemove", command)
 
+    def test_rr_clear_removes_only_known_project_tasks(self):
+        command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
+        manager = (
+            ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"
+        ).read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn('if /I "%~1"=="clear"', command)
+        self.assertIn("-Action Clear", command)
+        self.assertIn('"Clear"', manager)
+        self.assertIn("Clear-AllReverseRepoTasks", manager)
+        self.assertIn("$allReverseRepoTaskNames", manager)
+        for task_name in (
+            "miniQMT Reverse Repo First",
+            "miniQMT Reverse Repo Second",
+            "miniQMT LIVE READONLY Morning",
+            "miniQMT LIVE READONLY Afternoon",
+            "miniQMT SIM Interface Stress 5Hz",
+            "miniQMT SIM Repo V2 Certificate",
+        ):
+            self.assertIn(task_name, manager)
+        self.assertIn("残留0项", manager)
+        self.assertIn("运行中的任务不会被强制终止", manager)
+        self.assertNotIn("Stop-ScheduledTask", manager)
+        self.assertIn(".\\rr clear", readme)
+
     def test_manager_help_puts_live_commands_before_simulation_tools(self):
         manager = (
             ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"

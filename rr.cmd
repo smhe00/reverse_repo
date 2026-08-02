@@ -21,6 +21,10 @@ if /I "%~1"=="del" (
     "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Remove
     exit /b !ERRORLEVEL!
 )
+if /I "%~1"=="clear" (
+    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Clear
+    exit /b !ERRORLEVEL!
+)
 if /I "%~1"=="stat" (
     "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Status
     exit /b !ERRORLEVEL!

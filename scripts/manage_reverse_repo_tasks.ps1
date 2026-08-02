@@ -4,6 +4,7 @@ param(
     [ValidateSet(
         "Install",
         "Remove",
+        "Clear",
         "Status",
         "Enable",
         "Disable",
@@ -41,12 +42,33 @@ $certTaskNames = @(
     "miniQMT SIM Repo V2 Second",
     "miniQMT SIM Repo V2 Certificate"
 )
+$readOnlyTaskNames = @(
+    "miniQMT LIVE READONLY Morning",
+    "miniQMT LIVE READONLY Afternoon"
+)
+$obsoleteCertTaskNames = @(
+    "miniQMT SIM Repo V2 Morning Recovery",
+    "miniQMT SIM Repo V2 Afternoon"
+)
+$legacyProjectTaskNames = @(
+    "miniQMT Backtest DB Update Yesterday"
+)
 $obsoleteTaskNames = @(
     "miniQMT Reverse Repo Once",
     "miniQMT GC001 Daily 90pct 093042",
     "miniQMT GC001 R001 Afternoon Sweep",
     "miniQMT Reverse Repo Morning",
     "miniQMT Reverse Repo Afternoon"
+)
+$allReverseRepoTaskNames = @(
+    $managedTaskNames +
+        $obsoleteTaskNames +
+        $certTaskNames +
+        $obsoleteCertTaskNames +
+        $readOnlyTaskNames +
+        @($stressTaskName) +
+        $legacyProjectTaskNames |
+        Sort-Object -Unique
 )
 $taskDefinitions = @()
 $firstExecutionText = "未加载"
@@ -319,6 +341,100 @@ function Remove-ManagedTasks {
                 -Confirm:$false
         }
     }
+}
+
+function Clear-AllReverseRepoTasks {
+    if ($PSCmdlet.ShouldProcess(
+        (Get-ReverseRepoLiveEnableManifestPath),
+        "Revoke live-enable snapshot before clearing all project tasks"
+    )) {
+        Remove-ReverseRepoLiveEnableManifest
+    }
+
+    $installed = @(
+        foreach ($taskName in $allReverseRepoTaskNames) {
+            $task = Get-ScheduledTask `
+                -TaskName $taskName `
+                -ErrorAction SilentlyContinue
+            if ($null -ne $task) {
+                $task
+            }
+        }
+    )
+    foreach ($task in $installed) {
+        if ($PSCmdlet.ShouldProcess(
+            $task.TaskName,
+            "Disable project task before removal"
+        )) {
+            Disable-ScheduledTask -TaskName $task.TaskName | Out-Null
+        }
+    }
+
+    if ($WhatIfPreference) {
+        foreach ($task in $installed) {
+            $null = $PSCmdlet.ShouldProcess(
+                $task.TaskName,
+                "Remove project task"
+            )
+        }
+        Write-Output (
+            "WhatIf：将清除$($installed.Count)项reverse_repo计划任务。"
+        )
+        return
+    }
+
+    $running = @(
+        foreach ($taskName in $allReverseRepoTaskNames) {
+            $task = Get-ScheduledTask `
+                -TaskName $taskName `
+                -ErrorAction SilentlyContinue
+            if ($null -ne $task -and [string]$task.State -eq "Running") {
+                $task.TaskName
+            }
+        }
+    )
+    if ($running.Count -gt 0) {
+        throw (
+            "已禁用所有后续触发，但以下任务仍在运行，未强制终止：" +
+            ($running -join ", ") +
+            "。等待其结束后再次执行 .\rr clear。"
+        )
+    }
+
+    $removedNames = @()
+    foreach ($taskName in $allReverseRepoTaskNames) {
+        $task = Get-ScheduledTask `
+            -TaskName $taskName `
+            -ErrorAction SilentlyContinue
+        if (
+            $null -ne $task -and
+            $PSCmdlet.ShouldProcess($taskName, "Remove project task")
+        ) {
+            Unregister-ScheduledTask `
+                -TaskName $taskName `
+                -Confirm:$false
+            $removedNames += $taskName
+        }
+    }
+    $remaining = @(
+        foreach ($taskName in $allReverseRepoTaskNames) {
+            if ($null -ne (Get-ScheduledTask `
+                -TaskName $taskName `
+                -ErrorAction SilentlyContinue)) {
+                $taskName
+            }
+        }
+    )
+    if ($remaining.Count -ne 0) {
+        throw (
+            "计划任务清理不完整，仍有残留：" +
+            ($remaining -join ", ")
+        )
+    }
+    Write-Output (
+        "已清除全部reverse_repo计划任务，共$($removedNames.Count)项；" +
+        "残留0项。代码、配置、绑定、证书和报告均保留。"
+    )
 }
 
 function Set-ManagedTasksEnabled {
@@ -875,6 +991,11 @@ rr - miniQMT 逆回购自动任务管理工具
   .\rr del
       删除两个实盘任务，不删除代码、日志、报告或模拟任务。
 
+  .\rr clear
+      禁用并删除本项目全部已知计划任务，包括实盘、只读检查、模拟认证、
+      恢复和压力测试任务，同时撤销实盘启用快照；不删除代码、配置、
+      账户绑定、证书或报告。运行中的任务不会被强制终止。
+
   当前实盘参数：
     第一次：$firstStartText 启动，$firstExecutionText 执行GC001，
             使用 $firstCashUsagePercent 可用资金，最多尝试5分钟。
@@ -940,6 +1061,9 @@ switch ($Action) {
     "Remove" {
         Remove-ManagedTasks
         Write-Output "逆回购计划任务已删除。"
+    }
+    "Clear" {
+        Clear-AllReverseRepoTasks
     }
     "Status" {
         Get-ManagedTaskStatus
