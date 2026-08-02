@@ -12,47 +12,24 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Get-ReverseRepoRoot
 $windowsPowerShell = Get-ReverseRepoPowerShell
 $pythonVersion = "3.12.10"
-$pythonSha256 = (
-    "67b5635e80ea51072b87941312d00ec8" +
-    "927c4db9ba18938f7ad2d27b328b95fb"
+$pythonPackageSha512 = (
+    "bbda4dcf688a94211b62d50968a91b38f305d0b8d1ecd90269f74a86f8a0a4fc" +
+    "ebb7ca162a0753a47691eb3df0c964009bd3d8194c6fd19afae8d5fd01e1cc0f"
 )
-$pythonFilename = "python-$pythonVersion-amd64.exe"
+$pythonPackagePath = Join-Path `
+    $repoRoot `
+    "dist\python-3.12.10-portable.nupkg"
 $runtimeDirectory = Join-Path $repoRoot ".runtime\python312"
 $runtimePython = Join-Path $runtimeDirectory "python.exe"
-$script:BasePythonPath = ""
 $venvDirectory = Join-Path $repoRoot ".venv"
 $venvPython = Join-Path $venvDirectory "Scripts\python.exe"
 $runtimeConfigPath = Join-Path $repoRoot "config\runtime.local.json"
 $requirementsPath = Join-Path $repoRoot "requirements.txt"
 $bootstrapDirectory = Join-Path $repoRoot "tmp\bootstrap"
-$installerPath = Join-Path $bootstrapDirectory $pythonFilename
 $signingKeyPath = Join-Path `
     $repoRoot `
     "config\repo_release_gate_secret.local.json"
 
-$pythonMirrors = @(
-    [pscustomobject]@{
-        Name = "清华大学TUNA"
-        Uri = (
-            "https://mirrors.tuna.tsinghua.edu.cn/python/" +
-            "$pythonVersion/$pythonFilename"
-        )
-    },
-    [pscustomobject]@{
-        Name = "北京外国语大学BFSU"
-        Uri = (
-            "https://mirrors.bfsu.edu.cn/python/" +
-            "$pythonVersion/$pythonFilename"
-        )
-    },
-    [pscustomobject]@{
-        Name = "华为云"
-        Uri = (
-            "https://mirrors.huaweicloud.com/python/" +
-            "$pythonVersion/$pythonFilename"
-        )
-    }
-)
 $pipMirrors = @(
     [pscustomobject]@{
         Name = "清华大学TUNA"
@@ -172,64 +149,9 @@ function Assert-PythonExecutable {
     }
 }
 
-function Test-CompatibleBasePython {
-    param([Parameter(Mandatory = $true)][string]$PythonPath)
-    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
-        return $false
-    }
-    $probe = & $PythonPath -c (
-        "import struct,sys;" +
-        "print('.'.join(map(str,sys.version_info[:3]))+'|'+" +
-        "str(struct.calcsize('P')*8))"
-    ) 2>$null
-    return (
-        $null -ne $LASTEXITCODE `
-        -and [int]$LASTEXITCODE -eq 0 `
-        -and [string]$probe -eq "3.12.10|64"
-    )
-}
-
-function Find-CompatibleBasePython {
-    $candidates = @(
-        $runtimePython,
-        (Join-Path `
-            $env:LOCALAPPDATA `
-            "Python\pythoncore-3.12-64\python.exe"),
-        (Join-Path `
-            $env:LOCALAPPDATA `
-            "Programs\Python\Python312\python.exe")
-    )
-    foreach ($registryPath in @(
-        "HKCU:\Software\Python\PythonCore\3.12\InstallPath",
-        "HKLM:\Software\Python\PythonCore\3.12\InstallPath",
-        "HKLM:\Software\WOW6432Node\Python\PythonCore\3.12\InstallPath"
-    )) {
-        if (-not (Test-Path -LiteralPath $registryPath)) {
-            continue
-        }
-        $key = Get-Item -LiteralPath $registryPath
-        $registeredExecutable = [string]$key.GetValue("ExecutablePath")
-        $registeredRoot = [string]$key.GetValue("")
-        if (-not [string]::IsNullOrWhiteSpace($registeredExecutable)) {
-            $candidates += $registeredExecutable
-        }
-        if (-not [string]::IsNullOrWhiteSpace($registeredRoot)) {
-            $candidates += Join-Path $registeredRoot "python.exe"
-        }
-    }
-    foreach ($candidate in ($candidates | Select-Object -Unique)) {
-        if (Test-CompatibleBasePython -PythonPath $candidate) {
-            return [System.IO.Path]::GetFullPath($candidate)
-        }
-    }
-    return $null
-}
-
-function Install-PrivatePython {
-    $compatiblePython = Find-CompatibleBasePython
-    if (-not [string]::IsNullOrWhiteSpace($compatiblePython)) {
-        $script:BasePythonPath = $compatiblePython
-        Write-Output "复用已验证的Python 3.12.10 x64：$compatiblePython"
+function Install-PortablePython {
+    if (Test-Path -LiteralPath $runtimePython -PathType Leaf) {
+        Assert-PythonExecutable -PythonPath $runtimePython
         return
     }
     if (
@@ -241,117 +163,73 @@ function Install-PrivatePython {
             "$runtimeDirectory. Move it aside before retrying."
         )
     }
-    New-Item -ItemType Directory -Force -Path $bootstrapDirectory |
-        Out-Null
-    $orderedMirrors = Get-ReachableMirrors `
-        -Mirrors $pythonMirrors `
-        -ProbeProperty "Uri"
-    if ($orderedMirrors.Count -eq 0) {
-        throw "No domestic Python download mirror is reachable."
+    if (-not (Test-Path -LiteralPath $pythonPackagePath -PathType Leaf)) {
+        throw "Bundled portable Python package is missing: $pythonPackagePath"
     }
-    $downloaded = $false
-    foreach ($mirror in $orderedMirrors) {
-        $partialPath = "$installerPath.partial"
-        if (Test-Path -LiteralPath $partialPath -PathType Leaf) {
-            Remove-Item -LiteralPath $partialPath -Force
-        }
-        Write-Output "从$($mirror.Name)下载Python $pythonVersion x64。"
-        try {
-            Invoke-WebRequest `
-                -UseBasicParsing `
-                -Uri $mirror.Uri `
-                -OutFile $partialPath `
-                -TimeoutSec 300
-            $actualHash = (
-                Get-FileHash -LiteralPath $partialPath -Algorithm SHA256
-            ).Hash.ToLowerInvariant()
-            if ($actualHash -ne $pythonSha256) {
-                throw "Python installer SHA-256 mismatch."
-            }
-            $signature = Get-AuthenticodeSignature -FilePath $partialPath
+    $actualHash = (
+        Get-FileHash -LiteralPath $pythonPackagePath -Algorithm SHA512
+    ).Hash.ToLowerInvariant()
+    if ($actualHash -ne $pythonPackageSha512) {
+        throw "Bundled portable Python package SHA-512 mismatch."
+    }
+
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($pythonPackagePath)
+    try {
+        foreach ($entry in $archive.Entries) {
+            $name = $entry.FullName.Replace("\", "/")
             if (
-                [string]$signature.Status -ne "Valid" `
-                -or $null -eq $signature.SignerCertificate `
-                -or [string]$signature.SignerCertificate.Subject `
-                    -notmatch "Python Software Foundation"
+                [string]::IsNullOrWhiteSpace($name) -or
+                $name.StartsWith("/") -or
+                $name -match "^[A-Za-z]:" -or
+                ($name.Split("/") -contains "..")
             ) {
-                throw "Python installer Authenticode signature is invalid."
-            }
-            Move-Item `
-                -LiteralPath $partialPath `
-                -Destination $installerPath `
-                -Force
-            $downloaded = $true
-            break
-        }
-        catch {
-            Write-Warning (
-                "Python下载或校验失败：$($mirror.Name) - " +
-                $_.Exception.Message
-            )
-        }
-        finally {
-            if (Test-Path -LiteralPath $partialPath -PathType Leaf) {
-                Remove-Item -LiteralPath $partialPath -Force
+                throw "Unsafe path in portable Python package: $name"
             }
         }
-    }
-    if (-not $downloaded) {
-        throw "All domestic Python mirrors failed download or verification."
-    }
-    $arguments = @(
-        "/quiet",
-        "InstallAllUsers=0",
-        "TargetDir=`"$runtimeDirectory`"",
-        "PrependPath=0",
-        "Include_pip=1",
-        "Include_launcher=0",
-        "Include_test=0",
-        "Include_doc=0",
-        "Shortcuts=0",
-        "AssociateFiles=0"
-    )
-    $process = Start-Process `
-        -FilePath $installerPath `
-        -ArgumentList $arguments `
-        -Wait `
-        -PassThru `
-        -WindowStyle Hidden
-    if ([int]$process.ExitCode -ne 0) {
-        throw "Private Python installer failed: $($process.ExitCode)"
-    }
-    $compatiblePython = Find-CompatibleBasePython
-    if ([string]::IsNullOrWhiteSpace($compatiblePython)) {
-        Write-Warning (
-            "Python安装器返回成功，但登记的解释器文件不存在；" +
-            "尝试修复Windows中的既有Python 3.12.10安装。"
-        )
-        $repair = Start-Process `
-            -FilePath $installerPath `
-            -ArgumentList @("/repair", "/quiet") `
-            -Wait `
-            -PassThru `
-            -WindowStyle Hidden
-        if ([int]$repair.ExitCode -ne 0) {
-            throw "Python repair failed: $($repair.ExitCode)"
+        if (-not ($archive.Entries.FullName -contains "tools/python.exe")) {
+            throw "Portable Python package does not contain tools/python.exe."
         }
-        $compatiblePython = Find-CompatibleBasePython
     }
-    if ([string]::IsNullOrWhiteSpace($compatiblePython)) {
-        throw (
-            "Python installer returned success but no compatible executable " +
-            "was found. Remove the stale Python 3.12.10 entry from Windows " +
-            "Installed apps, then run .\rr init again."
+    finally {
+        $archive.Dispose()
+    }
+
+    $stagingRoot = Join-Path `
+        $bootstrapDirectory `
+        ("python_" + [guid]::NewGuid().ToString("N"))
+    try {
+        New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+        [System.IO.Compression.ZipFile]::ExtractToDirectory(
+            $pythonPackagePath,
+            $stagingRoot
         )
+        $stagingTools = Join-Path $stagingRoot "tools"
+        $stagingPython = Join-Path $stagingTools "python.exe"
+        Assert-PythonExecutable -PythonPath $stagingPython
+        New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path (Split-Path -Parent $runtimeDirectory) |
+            Out-Null
+        if (Test-Path -LiteralPath $runtimeDirectory) {
+            Remove-Item -LiteralPath $runtimeDirectory -Force
+        }
+        Move-Item `
+            -LiteralPath $stagingTools `
+            -Destination $runtimeDirectory
     }
-    $script:BasePythonPath = $compatiblePython
-    Assert-PythonExecutable -PythonPath $script:BasePythonPath
+    finally {
+        if (Test-Path -LiteralPath $stagingRoot) {
+            Remove-Item -LiteralPath $stagingRoot -Recurse -Force
+        }
+    }
+    Write-Output "已在项目目录内展开便携Python $pythonVersion x64。"
+    Assert-PythonExecutable -PythonPath $runtimePython
 }
 
 function Install-VirtualEnvironment {
-    if ([string]::IsNullOrWhiteSpace($script:BasePythonPath)) {
-        throw "A compatible base Python was not selected."
-    }
     if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
         if (
             (Test-Path -LiteralPath $venvDirectory -PathType Container) `
@@ -362,7 +240,7 @@ function Install-VirtualEnvironment {
                 "before retrying: $venvDirectory"
             )
         }
-        & $script:BasePythonPath -m venv $venvDirectory
+        & $runtimePython -m venv $venvDirectory
         if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
             throw "Creating the local virtual environment failed."
         }
@@ -612,7 +490,7 @@ function Initialize-AccountBinding {
 }
 
 Assert-LiveTasksInactive
-Install-PrivatePython
+Install-PortablePython
 Install-VirtualEnvironment
 Initialize-RuntimeConfiguration
 Initialize-SigningKey

@@ -22,6 +22,13 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "QMT install-root resolution verification failed."
 }
+& $windowsPowerShell `
+    -NoProfile `
+    -ExecutionPolicy Bypass `
+    -File (Join-Path $bundleRoot "tests\test_portable_python_runtime.ps1")
+if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+    throw "Portable Python isolation verification failed."
+}
 $pythonPath = Get-ReverseRepoPython
 
 # Validate the complete local F/S relationship and both cash ratios without

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -15,28 +17,42 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("-Action Initialize", command)
         self.assertNotIn("pwsh", command.lower())
 
-    def test_initializer_bootstraps_verified_python_from_domestic_mirrors(self):
+    def test_initializer_bootstraps_verified_portable_python(self):
         initializer = (
             ROOT / "scripts" / "initialize_reverse_repo.ps1"
         ).read_text(encoding="utf-8")
         self.assertIn('$pythonVersion = "3.12.10"', initializer)
         self.assertIn(
-            "67b5635e80ea51072b87941312d00ec8",
+            "bbda4dcf688a94211b62d50968a91b38",
             initializer,
         )
-        self.assertIn("mirrors.tuna.tsinghua.edu.cn", initializer)
-        self.assertIn("mirrors.bfsu.edu.cn", initializer)
-        self.assertIn("mirrors.huaweicloud.com", initializer)
         self.assertIn("pypi.tuna.tsinghua.edu.cn", initializer)
-        self.assertIn("Get-AuthenticodeSignature", initializer)
-        self.assertIn("Python Software Foundation", initializer)
         self.assertIn("Assert-LiveTasksInactive", initializer)
-        self.assertIn("Find-CompatibleBasePython", initializer)
-        self.assertIn("Test-CompatibleBasePython", initializer)
-        self.assertIn("Python\\pythoncore-3.12-64\\python.exe", initializer)
-        self.assertIn('@("/repair", "/quiet")', initializer)
-        self.assertIn("复用已验证的Python 3.12.10 x64", initializer)
+        self.assertIn("Install-PortablePython", initializer)
+        self.assertIn("python-3.12.10-portable.nupkg", initializer)
+        self.assertIn("ExtractToDirectory", initializer)
+        self.assertIn("Unsafe path in portable Python package", initializer)
+        self.assertNotIn("Start-Process", initializer)
+        self.assertNotIn("Find-CompatibleBasePython", initializer)
+        self.assertNotIn("HKCU:", initializer)
+        self.assertNotIn("HKLM:", initializer)
         self.assertNotIn("https://www.python.org/ftp", initializer)
+
+    def test_bundled_python_is_pinned_complete_nuget_runtime(self):
+        package = ROOT / "dist" / "python-3.12.10-portable.nupkg"
+        digest = hashlib.sha512(package.read_bytes()).hexdigest()
+        self.assertEqual(
+            digest,
+            "bbda4dcf688a94211b62d50968a91b38"
+            "f305d0b8d1ecd90269f74a86f8a0a4fc"
+            "ebb7ca162a0753a47691eb3df0c964009"
+            "bd3d8194c6fd19afae8d5fd01e1cc0f",
+        )
+        with zipfile.ZipFile(package) as archive:
+            names = set(archive.namelist())
+        self.assertIn("tools/python.exe", names)
+        self.assertIn("tools/Lib/venv/__init__.py", names)
+        self.assertIn("tools/Lib/ensurepip/__init__.py", names)
 
     def test_initializer_accepts_qmt_install_roots_and_waits_for_userdata(self):
         initializer = (

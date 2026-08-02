@@ -27,18 +27,6 @@ if ($null -eq $resolver) {
     throw "Resolve-QmtUserdataPath was not found."
 }
 Invoke-Expression $resolver.Extent.Text
-$basePythonFinder = $ast.Find(
-    {
-        param($node)
-        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] `
-            -and $node.Name -eq "Find-CompatibleBasePython"
-    },
-    $true
-)
-if ($null -eq $basePythonFinder) {
-    throw "Find-CompatibleBasePython was not found."
-}
-Invoke-Expression $basePythonFinder.Extent.Text
 
 function Assert-Equal {
     param(
@@ -128,30 +116,7 @@ try {
         throw "An obviously swapped live QMT path was not rejected."
     }
 
-    # Python Manager's stable per-user runtime is preferred over downloading
-    # another interpreter into a directory the user may later clear.
-    $oldLocalAppData = $env:LOCALAPPDATA
-    try {
-        $env:LOCALAPPDATA = $testRoot
-        $runtimePython = Join-Path $testRoot "missing\python.exe"
-        $expectedManagerPython = Join-Path `
-            $testRoot `
-            "Python\pythoncore-3.12-64\python.exe"
-        function Test-CompatibleBasePython {
-            param([string]$PythonPath)
-            return $PythonPath -eq $expectedManagerPython
-        }
-        $selectedPython = Find-CompatibleBasePython
-        Assert-Equal `
-            -Expected $expectedManagerPython `
-            -Actual $selectedPython `
-            -Message "Python Manager runtime was not selected."
-    }
-    finally {
-        $env:LOCALAPPDATA = $oldLocalAppData
-    }
-
-    Write-Output "QMT path and base-Python selection tests passed."
+    Write-Output "QMT install-root and userdata wait tests passed."
 }
 finally {
     if (Test-Path -LiteralPath $testRoot) {

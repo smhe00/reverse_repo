@@ -24,7 +24,7 @@ function Get-RemoteFile {
                 -OutFile $Path `
                 -UseBasicParsing `
                 -Headers @{ "Cache-Control" = "no-cache" } `
-                -TimeoutSec 60
+                -TimeoutSec 300
             return
         }
         catch {

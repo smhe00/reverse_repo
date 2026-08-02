@@ -52,7 +52,7 @@ rr stat 人工确认 → rr on 启用实盘
 2. 新建一个空目录，例如`D:\reverse_repo`。
 3. 在该目录中打开Windows 10自带的Windows PowerShell。无需安装或学习Git，
    也无需预装Python或PowerShell 7。
-4. 确保首次安装时能够访问Gitee和国内Python、PyPI镜像。
+4. 确保首次安装时能够访问Gitee和国内PyPI镜像。
 
 详细说明：[目录结构](#details-directory)、[初始化器与Python](#details-init)。
 
@@ -84,8 +84,8 @@ Gitee登录，不会安装Git。目标目录不为空、下载内容不是有效
 当程序随后要求绑定账户时，保持对应miniQMT登录并输入`Y`。绑定只查询账户，
 不下单，也不会把证券账号写入代码或配置。
 
-预期结果：兼容的Python 3.12.10已确认、仓库独立`.venv`安装完成，本机配置与
-签名密钥已经生成，
+预期结果：便携Python 3.12.10和仓库独立`.venv`均在当前目录安装完成，本机
+配置与签名密钥已经生成，
 两项实盘计划任务均已安装但保持`Disabled`。如果暂时跳过绑定，之后执行：
 
 ```powershell
@@ -295,7 +295,7 @@ reverse_repo/
 ├─ install.ps1            # 无Git一键下载安装器
 ├─ rr.cmd                 # 简短任务管理入口
 ├─ bind.ps1               # 实盘/模拟账户绑定入口
-├─ .runtime/              # 本机无兼容Python时使用的基础运行时，不进入版本库
+├─ .runtime/              # 项目自带便携Python，仅存在于本目录
 ├─ .venv/                 # 策略专用虚拟环境，不进入版本库
 ├─ scripts/               # 执行器、状态机、门禁和PowerShell封装
 ├─ tests/                 # 独立单元测试
@@ -501,7 +501,7 @@ QMT本机路径、SMTP配置与密码、签名密钥、实盘启用快照和运�
 
 <a id="details-init"></a>
 
-## 附录G：初始化器、Python与国内镜像
+## 附录G：初始化器、便携Python与国内PyPI
 
 快速开始中的一行PowerShell命令只负责取得`install.ps1`。安装器再从同一Gitee
 仓库的`raw/main/dist`下载发布包及SHA-256文件；两者无需Gitee账号。安装器仅
@@ -515,28 +515,21 @@ QMT本机路径、SMTP配置与密码、签名密钥、实盘启用快照和运�
 生成，初始化器会等待用户启动对应QMT、勾选“独立交易”并完成一次登录，然后
 在原位置重新检测。
 
-`rr init`不使用QMT目录中的`python36.dll`。该文件是QMT内部嵌入式运行库，
-不是带有`python.exe`、`pip`和`venv`的完整Python发行版。初始化器先探测仓库
-运行时、Python安装管理器目录、标准用户安装目录和Windows登记路径；仅复用
-版本严格等于3.12.10且为64位的解释器，并始终在当前仓库创建独立`.venv`。
+`rr init`不使用QMT目录中的`python36.dll`，也不探测或复用系统Python。发布包
+自带CPython官方NuGet版Python 3.12.10 x64；初始化器核对固定SHA-512和ZIP内部
+路径后，只把它展开到当前项目的`.runtime\python312`，再在同一项目中创建
+`.venv`。它不调用Windows Python安装器，不写Python注册表，不修改系统PATH，
+不创建用户级或系统级pip配置，也不受机器上其他Python版本影响。
 
-本机没有兼容解释器时，初始化器才从国内镜像下载经过固定SHA-256和
-Authenticode验证的安装包。若Windows仍登记着已被手工删除的同版本Python，
-安装程序可能返回成功却不重新落盘；初始化器会再次检查实际文件并尝试修复，
-不会仅凭返回码判定成功。整个过程不修改系统PATH、不创建全局pip配置，也不
-覆盖非空但不完整的`.runtime`或`.venv`目录。
+Python 3.12已经进入仅安全修复阶段；3.12.10是该系列最后一个完整维护版本，
+本项目固定使用这个具备完整`venv`和`ensurepip`的官方NuGet包。该包随Gitee
+发布包一次下载，因此Python基础运行时不再访问额外国外下载地址。依赖安装按
+响应时间依次尝试以下国内PyPI镜像：清华大学TUNA、北京外国语大学BFSU、
+华为云。
 
-Python 3.12已经进入仅安全修复阶段；3.12.10是官方最后一个提供Windows x64
-二进制安装器的3.12版本，因此本项目固定使用3.12.10，而不是需要本机编译的
-后续源码版本。初始化器按响应时间探测以下国内镜像，并在下载或安装失败时切换：
-
-- Python安装包：清华大学TUNA、北京外国语大学BFSU、华为云。
-- PyPI：清华大学TUNA、北京外国语大学BFSU、华为云。
-
-Python安装包必须同时通过固定SHA-256和Python Software Foundation的
-Authenticode数字签名校验。pip只将最终成功的国内镜像写入当前`.venv`的站点
-级配置，不修改用户或系统配置。XtQuant版本由`requirements.txt`锁定；其变化
-会使模拟能力证书失效，必须重新认证。
+pip只将最终成功的国内镜像写入当前`.venv`的站点级配置，不修改用户或系统
+配置。XtQuant版本由`requirements.txt`锁定；其变化会使模拟能力证书失效，
+必须重新认证。非空但不完整的`.runtime`或`.venv`会被拒绝，避免静默覆盖。
 
 初始化器会创建本机HMAC签名密钥，但不会生成模拟能力证书、启用任务或下单。
 完整模拟认证仍需另行执行`rr cert`。
