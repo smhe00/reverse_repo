@@ -679,7 +679,8 @@ Initialize-SigningKey
 & $windowsPowerShell `
     -NoProfile `
     -ExecutionPolicy Bypass `
-    -File (Join-Path $repoRoot "verify.ps1")
+    -File (Join-Path $repoRoot "verify.ps1") `
+    -Initialization
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Local verification failed during initialization."
 }

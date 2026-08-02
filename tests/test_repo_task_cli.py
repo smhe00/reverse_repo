@@ -121,6 +121,16 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         )
         self.assertIn("test_windows_powershell_utf8_json.ps1", verifier)
 
+    def test_initializer_verification_ignores_maintainer_release_artifacts(self):
+        initializer = (
+            ROOT / "scripts" / "initialize_reverse_repo.ps1"
+        ).read_text(encoding="utf-8-sig")
+        verifier = (ROOT / "verify.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("-Initialization", initializer)
+        self.assertIn("param([switch]$Initialization)", verifier)
+        self.assertIn("tmp\\initialization_verification", verifier)
+        self.assertIn("-not $Initialization", verifier)
+
     def test_rr_cert_dispatches_all_supported_operations(self):
         command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
         self.assertIn('if /I "%~1"=="cert"', command)

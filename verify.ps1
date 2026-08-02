@@ -1,4 +1,7 @@
-﻿Set-StrictMode -Version Latest
+﻿[CmdletBinding()]
+param([switch]$Initialization)
+
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $bundleRoot = $PSScriptRoot
@@ -121,12 +124,28 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Reverse-repo unit tests failed."
 }
 
+$formalVerificationOutput = if ($Initialization) {
+    $initializationVerificationRoot = Join-Path `
+        $bundleRoot `
+        "tmp\initialization_verification"
+    New-Item `
+        -ItemType Directory `
+        -Force `
+        -Path $initializationVerificationRoot |
+        Out-Null
+    Join-Path `
+        $initializationVerificationRoot `
+        "reverse_repo_state_machine_verification.local.json"
+}
+else {
+    Join-Path `
+        $bundleRoot `
+        "docs\reverse_repo_state_machine_verification.json"
+}
 & $pythonPath `
     (Join-Path $scriptsRoot "verify_repo_state_machines.py") `
     "--output" `
-    (Join-Path `
-        $bundleRoot `
-        "docs\reverse_repo_state_machine_verification.json")
+    $formalVerificationOutput
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Reverse-repo formal verification failed."
 }
@@ -134,7 +153,12 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
 # A source checkout publishes the anonymous no-Git installation bundle. The
 # extracted end-user package has no .git directory and therefore does not need
 # to carry a second copy of itself.
-if (Test-Path -LiteralPath (Join-Path $bundleRoot ".git") -PathType Container) {
+if (
+    -not $Initialization `
+    -and (Test-Path `
+        -LiteralPath (Join-Path $bundleRoot ".git") `
+        -PathType Container)
+) {
     & $windowsPowerShell `
         -NoProfile `
         -ExecutionPolicy Bypass `
