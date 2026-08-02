@@ -96,9 +96,14 @@ try {
         }
         return $result
     }
-    $detectedLive = Get-RunningMiniQmtInstallRoot -Environment "live"
+    $detectedLive = Get-RunningMiniQmtInstallRoot `
+        -Environment "live" `
+        3>$null `
+        6>$null
     $detectedSimulation = Get-RunningMiniQmtInstallRoot `
-        -Environment "simulation"
+        -Environment "simulation" `
+        3>$null `
+        6>$null
     Assert-Equal `
         -Expected $liveRoot `
         -Actual $detectedLive `
@@ -108,7 +113,10 @@ try {
         -Actual $detectedSimulation `
         -Message "Running simulation miniQMT directory was not discovered."
     $script:processMode = "ambiguous"
-    $ambiguousLive = Get-RunningMiniQmtInstallRoot -Environment "live"
+    $ambiguousLive = Get-RunningMiniQmtInstallRoot `
+        -Environment "live" `
+        3>$null `
+        6>$null
     Assert-Equal `
         -Expected "" `
         -Actual $ambiguousLive `
@@ -144,7 +152,9 @@ try {
         -Environment "live" `
         -DefaultInstallRoot "C:\unused" `
         -DetectedInstallRoot "C:\also-unused" `
-        -Existing $liveUserdata
+        -Existing $liveUserdata `
+        3>$null `
+        6>$null
     Assert-Equal `
         -Expected $liveUserdata `
         -Actual $resolvedLive `
@@ -158,7 +168,9 @@ try {
         -Environment "live" `
         -DefaultInstallRoot "C:\unused" `
         -DetectedInstallRoot $detectedLive `
-        -Existing ""
+        -Existing "" `
+        3>$null `
+        6>$null
     Assert-Equal `
         -Expected $liveUserdata `
         -Actual $resolvedDetected `
@@ -171,7 +183,9 @@ try {
     $resolvedSimulation = Resolve-QmtUserdataPath `
         -Prompt "simulation" `
         -Environment "simulation" `
-        -DefaultInstallRoot $simulationRoot
+        -DefaultInstallRoot $simulationRoot `
+        3>$null `
+        6>$null
     Assert-Equal `
         -Expected $simulationUserdata `
         -Actual $resolvedSimulation `
@@ -199,7 +213,9 @@ try {
         throw "An obviously swapped live QMT path was not rejected."
     }
 
-    Write-Output "QMT install-root and userdata wait tests passed."
+    Write-Output (
+        "QMT install-root discovery and independent-login wait tests passed."
+    )
 }
 finally {
     if (Test-Path -LiteralPath $testRoot) {

@@ -148,7 +148,7 @@ try {
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
         throw "Portable Python failed to create a local virtual environment."
     }
-    & $venvPython -m pip --version
+    $pipProbe = @(& $venvPython -m pip --version 2>&1)
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
         throw "The local virtual environment does not contain pip."
     }

@@ -21,7 +21,12 @@ $repoRoot = Join-Path `
     ("reverse_repo_binding_test_" + [guid]::NewGuid().ToString("N"))
 function Read-Host { return "n" }
 
-$result = @(Initialize-AccountBinding -Environment "live")
+$result = @(
+    Initialize-AccountBinding `
+        -Environment "live" `
+        3>$null `
+        6>$null
+)
 if ($result.Count -ne 1 -or [bool]$result[0] -ne $false) {
     throw (
         "Skipping account binding must emit exactly one Boolean false; got: " +
