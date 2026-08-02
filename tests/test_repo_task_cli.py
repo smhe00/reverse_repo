@@ -33,6 +33,18 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("Assert-LiveTasksInactive", initializer)
         self.assertNotIn("https://www.python.org/ftp", initializer)
 
+    def test_initializer_accepts_qmt_install_roots_and_waits_for_userdata(self):
+        initializer = (
+            ROOT / "scripts" / "initialize_reverse_repo.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"D:\\国金证券QMT交易端"', initializer)
+        self.assertIn('"D:\\国金QMT交易端模拟"', initializer)
+        self.assertIn('Join-Path $installRoot "userdata_mini"', initializer)
+        self.assertIn("勾选【独立交易】并登录一次", initializer)
+        self.assertIn("输入Y重试，输入N退出", initializer)
+        self.assertIn("两个路径可能填反了", initializer)
+        self.assertNotIn('Prompt "实盘miniQMT路径"', initializer)
+
     def test_runtime_is_pinned_and_powershell_51_compatible(self):
         requirements = (ROOT / "requirements.txt").read_text(
             encoding="utf-8"

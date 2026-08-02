@@ -332,37 +332,80 @@ function Install-VirtualEnvironment {
 function Resolve-QmtUserdataPath {
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("live", "simulation")]
+        [string]$Environment,
+        [Parameter(Mandatory = $true)][string]$DefaultInstallRoot,
         [string]$Existing = ""
     )
-    $message = if ([string]::IsNullOrWhiteSpace($Existing)) {
-        $Prompt
+    $suggestedRoot = $DefaultInstallRoot
+    if (-not [string]::IsNullOrWhiteSpace($Existing)) {
+        $existingPath = [System.IO.Path]::GetFullPath(
+            [Environment]::ExpandEnvironmentVariables(
+                $Existing.Trim().Trim('"')
+            )
+        )
+        $suggestedRoot = if (
+            (Split-Path -Leaf $existingPath) -eq "userdata_mini"
+        ) {
+            Split-Path -Parent $existingPath
+        }
+        else {
+            $existingPath
+        }
     }
-    else {
-        "$Prompt [$Existing]"
-    }
-    $inputPath = Read-Host $message
+    $inputPath = Read-Host "$Prompt [$suggestedRoot]"
     if ([string]::IsNullOrWhiteSpace($inputPath)) {
-        $inputPath = $Existing
+        $inputPath = $suggestedRoot
     }
     $inputPath = [Environment]::ExpandEnvironmentVariables(
         $inputPath.Trim().Trim('"')
     )
     if ([string]::IsNullOrWhiteSpace($inputPath)) {
-        throw "QMT userdata path cannot be empty."
+        throw "miniQMT安装目录不能为空。"
     }
     $resolved = [System.IO.Path]::GetFullPath($inputPath)
-    if (
-        (Split-Path -Leaf $resolved) -ne "userdata_mini" `
-        -and (Test-Path `
-            -LiteralPath (Join-Path $resolved "userdata_mini") `
-            -PathType Container)
-    ) {
-        $resolved = Join-Path $resolved "userdata_mini"
+    $installRoot = if ((Split-Path -Leaf $resolved) -eq "userdata_mini") {
+        Split-Path -Parent $resolved
     }
-    if (-not (Test-Path -LiteralPath $resolved -PathType Container)) {
-        throw "QMT userdata path does not exist: $resolved"
+    else {
+        $resolved
     }
-    return $resolved
+    $label = if ($Environment -eq "live") { "实盘" } else { "模拟" }
+    if ($Environment -eq "live" -and $installRoot -match "模拟") {
+        throw (
+            "实盘miniQMT安装目录不能包含【模拟】，两个路径可能填反了：" +
+            $installRoot
+        )
+    }
+    if ($Environment -eq "simulation" -and $installRoot -notmatch "模拟") {
+        throw (
+            "模拟miniQMT安装目录应包含【模拟】，两个路径可能填反了：" +
+            $installRoot
+        )
+    }
+    if (-not (Test-Path -LiteralPath $installRoot -PathType Container)) {
+        throw "未找到${label}miniQMT安装目录，请先完成安装：$installRoot"
+    }
+
+    $userdataPath = Join-Path $installRoot "userdata_mini"
+    while (-not (Test-Path -LiteralPath $userdataPath -PathType Container)) {
+        Write-Warning (
+            "尚未检测到 $userdataPath。该目录会在首次使用【独立交易】" +
+            "登录后由miniQMT创建。"
+        )
+        $answer = Read-Host (
+            "请启动${label}miniQMT，勾选【独立交易】并登录一次；" +
+            "完成后输入Y重试，输入N退出 [Y/n]"
+        )
+        if ($answer.Trim() -match "^[Nn]$") {
+            throw (
+                "${label}miniQMT尚未完成独立交易登录；" +
+                "完成后重新运行 .\rr init。"
+            )
+        }
+    }
+    return $userdataPath
 }
 
 function Initialize-RuntimeConfiguration {
@@ -384,17 +427,15 @@ function Initialize-RuntimeConfiguration {
         [string]$existing.simulation_qmt_path
     }
     $livePath = Resolve-QmtUserdataPath `
-        -Prompt "实盘miniQMT路径" `
+        -Prompt "实盘miniQMT安装目录" `
+        -Environment "live" `
+        -DefaultInstallRoot "D:\国金证券QMT交易端" `
         -Existing $existingLive
     $simulationPath = Resolve-QmtUserdataPath `
-        -Prompt "模拟miniQMT路径" `
+        -Prompt "模拟miniQMT安装目录" `
+        -Environment "simulation" `
+        -DefaultInstallRoot "D:\国金QMT交易端模拟" `
         -Existing $existingSimulation
-    if ($livePath -match "模拟") {
-        throw "Live QMT path must not contain 模拟: $livePath"
-    }
-    if ($simulationPath -notmatch "模拟") {
-        throw "Simulation QMT path must contain 模拟: $simulationPath"
-    }
     $firstTime = if ($null -eq $existing) {
         "09:30:42"
     }

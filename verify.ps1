@@ -15,6 +15,13 @@ $windowsPowerShell = Get-ReverseRepoPowerShell
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Windows PowerShell 5.1 compatibility verification failed."
 }
+& $windowsPowerShell `
+    -NoProfile `
+    -ExecutionPolicy Bypass `
+    -File (Join-Path $bundleRoot "tests\test_qmt_path_resolution.ps1")
+if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+    throw "QMT install-root resolution verification failed."
+}
 $pythonPath = Get-ReverseRepoPython
 
 # Validate the complete local F/S relationship and both cash ratios without
