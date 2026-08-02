@@ -26,12 +26,28 @@ $resolver = $ast.Find(
 if ($null -eq $resolver) {
     throw "Resolve-QmtUserdataPath was not found."
 }
+$finder = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] `
+            -and $node.Name -eq "Get-RunningMiniQmtInstallRoot"
+    },
+    $true
+)
+if ($null -eq $finder) {
+    throw "Get-RunningMiniQmtInstallRoot was not found."
+}
+Invoke-Expression $finder.Extent.Text
 Invoke-Expression $resolver.Extent.Text
 
 function Assert-Equal {
     param(
-        [Parameter(Mandatory = $true)][string]$Expected,
-        [Parameter(Mandatory = $true)][string]$Actual,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Expected,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Actual,
         [Parameter(Mandatory = $true)][string]$Message
     )
     if ($Expected -ne $Actual) {
@@ -45,10 +61,59 @@ $testRoot = Join-Path `
 try {
     $liveRoot = Join-Path $testRoot "LiveQMT"
     $simulationRoot = Join-Path $testRoot "模拟QMT"
+    $otherLiveRoot = Join-Path $testRoot "OtherLiveQMT"
     $liveUserdata = Join-Path $liveRoot "userdata_mini"
     $simulationUserdata = Join-Path $simulationRoot "userdata_mini"
     New-Item -ItemType Directory -Path $liveUserdata | Out-Null
     New-Item -ItemType Directory -Path $simulationRoot | Out-Null
+    New-Item -ItemType Directory -Path $otherLiveRoot | Out-Null
+
+    $script:processMode = "unique"
+    function Get-CimInstance {
+        param(
+            [string]$ClassName,
+            [string]$Filter,
+            [object]$ErrorAction
+        )
+        $result = @(
+            [pscustomobject]@{
+                ExecutablePath = Join-Path `
+                    $liveRoot `
+                    "bin.x64\XtMiniQmt.exe"
+            },
+            [pscustomobject]@{
+                ExecutablePath = Join-Path `
+                    $simulationRoot `
+                    "bin.x64\XtMiniQmt.exe"
+            }
+        )
+        if ($script:processMode -eq "ambiguous") {
+            $result += [pscustomobject]@{
+                ExecutablePath = Join-Path `
+                    $otherLiveRoot `
+                    "bin.x64\XtMiniQmt.exe"
+            }
+        }
+        return $result
+    }
+    $detectedLive = Get-RunningMiniQmtInstallRoot -Environment "live"
+    $detectedSimulation = Get-RunningMiniQmtInstallRoot `
+        -Environment "simulation"
+    Assert-Equal `
+        -Expected $liveRoot `
+        -Actual $detectedLive `
+        -Message "Running live miniQMT directory was not discovered."
+    Assert-Equal `
+        -Expected $simulationRoot `
+        -Actual $detectedSimulation `
+        -Message "Running simulation miniQMT directory was not discovered."
+    $script:processMode = "ambiguous"
+    $ambiguousLive = Get-RunningMiniQmtInstallRoot -Environment "live"
+    Assert-Equal `
+        -Expected "" `
+        -Actual $ambiguousLive `
+        -Message "Ambiguous running miniQMT paths must not be selected."
+    $script:processMode = "unique"
 
     # Existing userdata configuration is displayed as its parent install root.
     $script:readMode = "existing"
@@ -69,17 +134,35 @@ try {
         if ($script:readMode -eq "swap") {
             return $simulationRoot
         }
+        if ($script:readMode -eq "detected") {
+            return ""
+        }
         return $liveRoot
     }
     $resolvedLive = Resolve-QmtUserdataPath `
         -Prompt "live" `
         -Environment "live" `
         -DefaultInstallRoot "C:\unused" `
+        -DetectedInstallRoot "C:\also-unused" `
         -Existing $liveUserdata
     Assert-Equal `
         -Expected $liveUserdata `
         -Actual $resolvedLive `
         -Message "Existing userdata path was not preserved."
+
+    # A uniquely discovered running process path becomes the prompt default.
+    $script:readMode = "detected"
+    $script:readCount = 0
+    $resolvedDetected = Resolve-QmtUserdataPath `
+        -Prompt "live" `
+        -Environment "live" `
+        -DefaultInstallRoot "C:\unused" `
+        -DetectedInstallRoot $detectedLive `
+        -Existing ""
+    Assert-Equal `
+        -Expected $liveUserdata `
+        -Actual $resolvedDetected `
+        -Message "Detected process path was not injected as the default."
 
     # Missing userdata pauses; after the mocked independent-trading login
     # creates it, the same resolver call continues successfully.

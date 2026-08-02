@@ -60,6 +60,13 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("勾选【独立交易】并登录一次", initializer)
         self.assertIn("输入Y重试，输入N退出", initializer)
         self.assertIn("两个路径可能填反了", initializer)
+        self.assertIn("Get-RunningMiniQmtInstallRoot", initializer)
+        self.assertIn("Name='XtMiniQmt.exe'", initializer)
+        self.assertIn("-DetectedInstallRoot $detectedLiveRoot", initializer)
+        self.assertIn(
+            "-DetectedInstallRoot $detectedSimulationRoot",
+            initializer,
+        )
         self.assertNotIn('Prompt "实盘miniQMT路径"', initializer)
 
     def test_account_binding_returns_only_a_boolean_success_value(self):

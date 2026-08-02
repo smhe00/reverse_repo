@@ -389,6 +389,76 @@ function Install-VirtualEnvironment {
     Assert-PythonExecutable -PythonPath $venvPython -RequireXtQuant
 }
 
+function Get-RunningMiniQmtInstallRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("live", "simulation")]
+        [string]$Environment
+    )
+    try {
+        $processes = @(
+            Get-CimInstance `
+                -ClassName Win32_Process `
+                -Filter "Name='XtMiniQmt.exe'" `
+                -ErrorAction Stop
+        )
+    }
+    catch {
+        Write-Warning (
+            "无法读取运行中的miniQMT进程路径，将使用配置或默认目录：" +
+            $_.Exception.Message
+        )
+        return ""
+    }
+
+    $candidates = @()
+    foreach ($process in $processes) {
+        $executablePath = [string]$process.ExecutablePath
+        if ([string]::IsNullOrWhiteSpace($executablePath)) {
+            continue
+        }
+        try {
+            $binDirectory = Split-Path -Parent (
+                [System.IO.Path]::GetFullPath($executablePath)
+            )
+            if ((Split-Path -Leaf $binDirectory) -ne "bin.x64") {
+                continue
+            }
+            $installRoot = Split-Path -Parent $binDirectory
+            if (-not (
+                Test-Path -LiteralPath $installRoot -PathType Container
+            )) {
+                continue
+            }
+            $isSimulation = $installRoot -match "模拟|仿真|simulation"
+            if (
+                ($Environment -eq "simulation" -and $isSimulation) -or
+                ($Environment -eq "live" -and -not $isSimulation)
+            ) {
+                $candidates += $installRoot
+            }
+        }
+        catch {
+            continue
+        }
+    }
+    $candidates = @($candidates | Sort-Object -Unique)
+    if ($candidates.Count -eq 1) {
+        $label = if ($Environment -eq "live") { "实盘" } else { "模拟" }
+        Write-Host "已从运行中的${label}miniQMT发现安装目录：$($candidates[0])"
+        return [string]$candidates[0]
+    }
+    if ($candidates.Count -gt 1) {
+        $label = if ($Environment -eq "live") { "实盘" } else { "模拟" }
+        Write-Warning (
+            "发现多个运行中的${label}miniQMT安装目录，" +
+            "为避免误选，将使用配置或默认目录：" +
+            ($candidates -join "; ")
+        )
+    }
+    return ""
+}
+
 function Resolve-QmtUserdataPath {
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
@@ -396,9 +466,17 @@ function Resolve-QmtUserdataPath {
         [ValidateSet("live", "simulation")]
         [string]$Environment,
         [Parameter(Mandatory = $true)][string]$DefaultInstallRoot,
+        [string]$DetectedInstallRoot = "",
         [string]$Existing = ""
     )
-    $suggestedRoot = $DefaultInstallRoot
+    $suggestedRoot = if (
+        [string]::IsNullOrWhiteSpace($DetectedInstallRoot)
+    ) {
+        $DefaultInstallRoot
+    }
+    else {
+        [System.IO.Path]::GetFullPath($DetectedInstallRoot)
+    }
     if (-not [string]::IsNullOrWhiteSpace($Existing)) {
         $existingPath = [System.IO.Path]::GetFullPath(
             [Environment]::ExpandEnvironmentVariables(
@@ -486,15 +564,20 @@ function Initialize-RuntimeConfiguration {
     else {
         [string]$existing.simulation_qmt_path
     }
+    $detectedLiveRoot = Get-RunningMiniQmtInstallRoot -Environment "live"
+    $detectedSimulationRoot = Get-RunningMiniQmtInstallRoot `
+        -Environment "simulation"
     $livePath = Resolve-QmtUserdataPath `
         -Prompt "实盘miniQMT安装目录" `
         -Environment "live" `
         -DefaultInstallRoot "D:\国金证券QMT交易端" `
+        -DetectedInstallRoot $detectedLiveRoot `
         -Existing $existingLive
     $simulationPath = Resolve-QmtUserdataPath `
         -Prompt "模拟miniQMT安装目录" `
         -Environment "simulation" `
         -DefaultInstallRoot "D:\国金QMT交易端模拟" `
+        -DetectedInstallRoot $detectedSimulationRoot `
         -Existing $existingSimulation
     $firstTime = if ($null -eq $existing) {
         "09:30:42"
