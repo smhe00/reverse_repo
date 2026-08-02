@@ -22,10 +22,8 @@ if ($LASTEXITCODE -ne 0 -or $trackedFiles.Count -eq 0) {
 $trackedFiles = @($trackedFiles | Where-Object {
     $_ -notin @(
         "dist/reverse_repo-latest.zip",
-        "dist/reverse_repo-latest.zip.sha256",
-        "dist/python-3.12.10-portable.nupkg"
-    ) -and $_ -notmatch `
-        "^dist/python-3\.12\.10-portable\.part[0-9]{2}$"
+        "dist/reverse_repo-latest.zip.sha256"
+    )
 })
 foreach ($required in @("install.ps1", "rr.cmd", "README.md")) {
     if ($trackedFiles -notcontains $required) {

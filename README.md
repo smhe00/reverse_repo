@@ -52,7 +52,7 @@ rr stat 人工确认 → rr on 启用实盘
 2. 新建一个空目录，例如`D:\reverse_repo`。
 3. 在该目录中打开Windows 10自带的Windows PowerShell。无需安装或学习Git，
    也无需预装Python或PowerShell 7。
-4. 确保首次安装时能够访问Gitee和国内PyPI镜像。
+4. 确保首次安装时能够访问Gitee、华为云Python镜像和国内PyPI镜像。
 
 详细说明：[目录结构](#details-directory)、[初始化器与Python](#details-init)。
 
@@ -515,18 +515,20 @@ QMT本机路径、SMTP配置与密码、签名密钥、实盘启用快照和运�
 生成，初始化器会等待用户启动对应QMT、勾选“独立交易”并完成一次登录，然后
 在原位置重新检测。
 
-`rr init`不使用QMT目录中的`python36.dll`，也不探测或复用系统Python。发布包
-自带CPython官方NuGet版Python 3.12.10 x64；初始化器核对固定SHA-512和ZIP内部
-路径后，只把它展开到当前项目的`.runtime\python312`，再在同一项目中创建
-`.venv`。它不调用Windows Python安装器，不写Python注册表，不修改系统PATH，
-不创建用户级或系统级pip配置，也不受机器上其他Python版本影响。
+`rr init`不使用QMT目录中的`python36.dll`，也不探测或复用系统Python。初始化器
+从华为云Python镜像下载CPython官方Python 3.12.10 x64完整ZIP，核对固定文件
+大小、SHA-256和ZIP内部路径后，只把它展开到当前项目的`.runtime\python312`，
+再在同一项目中创建`.venv`。它不调用Windows Python安装器，不写Python注册表，
+不修改系统PATH，不创建用户级或系统级pip配置，也不受机器上其他Python版本
+影响。
 
 Python 3.12已经进入仅安全修复阶段；3.12.10是该系列最后一个完整维护版本，
-本项目固定使用这个具备完整`venv`和`ensurepip`的官方NuGet包。为兼容Gitee
-匿名下载限制，原包被拆成经过独立大小和SHA-256校验的小分片；`rr init`从Gitee
-逐片下载，只在项目`tmp`内合并，并在解压前核对原始包SHA-512。Python基础
-运行时不访问额外国外下载地址。依赖安装按响应时间依次尝试以下国内PyPI镜像：
-清华大学TUNA、北京外国语大学BFSU、华为云。
+本项目固定使用其中具备完整`venv`、`ensurepip`和`pip`的`amd64.zip`，而不是缺少
+完整环境管理能力的embeddable包。下载地址固定为华为云国内镜像，当前发布包
+不再携带或从Gitee分发Python二进制。初始化器会在私有运行时内补齐该官方ZIP
+已经携带、但免安装布局未放到根目录的两个标准`venv`启动文件；文件不会复制到
+项目目录以外。依赖安装按响应时间依次尝试以下国内PyPI镜像：清华大学TUNA、
+北京外国语大学BFSU、华为云。
 
 pip只将最终成功的国内镜像写入当前`.venv`的站点级配置，不修改用户或系统
 配置。XtQuant版本由`requirements.txt`锁定；其变化会使模拟能力证书失效，

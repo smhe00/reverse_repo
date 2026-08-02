@@ -38,53 +38,98 @@ try {
     $registrationBefore = Get-PythonRegistrationSnapshot
 
     if (Test-Path -LiteralPath (Join-Path $repoRoot ".git")) {
-        # Maintainer checkout: reassemble tracked small parts locally so the
-        # test does not depend on Gitee availability.
-        $manifestPath = Join-Path `
-            $repoRoot `
-            "dist\python-3.12.10-portable.parts.json"
-        $manifest = Get-Content -LiteralPath $manifestPath -Raw |
-            ConvertFrom-Json
-        $packagePath = Join-Path $testRoot "python-portable.nupkg"
-        $packageStream = [System.IO.File]::Create($packagePath)
-        try {
-            foreach ($part in @($manifest.parts)) {
-                $partPath = Join-Path $repoRoot ("dist\" + [string]$part.name)
-                $actualPartHash = (
-                    Get-FileHash -LiteralPath $partPath -Algorithm SHA256
-                ).Hash.ToLowerInvariant()
+        # A maintainer checkout exercises the same domestic download that a
+        # new installation uses. The pinned hash is the CPython release hash.
+        $packagePath = Join-Path $testRoot "python-3.12.10-amd64.zip"
+        $packageUri = (
+            "https://mirrors.huaweicloud.com/python/3.12.10/" +
+            "python-3.12.10-amd64.zip"
+        )
+        $expectedSize = 32399384
+        $expectedHash = (
+            "9dc4d0b051bfd5b881f10846ee023fd7" +
+            "cea8251871e78b6e8920e5630b15e3bb"
+        )
+        $downloaded = $false
+        $lastError = $null
+        foreach ($attempt in 1..3) {
+            try {
+                Invoke-WebRequest `
+                    -UseBasicParsing `
+                    -Uri $packageUri `
+                    -OutFile $packagePath `
+                    -Headers @{ "Cache-Control" = "no-cache" } `
+                    -TimeoutSec 300
                 if (
-                    (Get-Item -LiteralPath $partPath).Length -ne
-                        [long]$part.size -or
-                    $actualPartHash -ne [string]$part.sha256
+                    (Get-Item -LiteralPath $packagePath).Length -ne
+                        $expectedSize -or
+                    (Get-FileHash `
+                        -LiteralPath $packagePath `
+                        -Algorithm SHA256
+                    ).Hash.ToLowerInvariant() -ne $expectedHash
                 ) {
-                    throw "Portable Python source part is invalid: $partPath"
+                    throw "Huawei Cloud Python ZIP failed integrity checks."
                 }
-                $partStream = [System.IO.File]::OpenRead($partPath)
-                try {
-                    $partStream.CopyTo($packageStream)
+                $downloaded = $true
+                break
+            }
+            catch {
+                $lastError = $_
+                if (Test-Path -LiteralPath $packagePath -PathType Leaf) {
+                    Remove-Item -LiteralPath $packagePath -Force
                 }
-                finally {
-                    $partStream.Dispose()
+                if ($attempt -lt 3) {
+                    Start-Sleep -Seconds 2
+                }
+            }
+        }
+        if (-not $downloaded) {
+            throw "Huawei Cloud Python download failed: $lastError"
+        }
+
+        Add-Type -AssemblyName System.IO.Compression
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($packagePath)
+        try {
+            foreach ($entry in $archive.Entries) {
+                $name = $entry.FullName.Replace("\", "/")
+                if (
+                    [string]::IsNullOrWhiteSpace($name) -or
+                    $name.StartsWith("/") -or
+                    $name -match "^[A-Za-z]:" -or
+                    ($name.Split("/") -contains "..")
+                ) {
+                    throw "Unsafe path in portable Python package: $name"
+                }
+            }
+            foreach ($requiredEntry in @(
+                "python.exe",
+                "Lib/venv/__init__.py",
+                "Lib/ensurepip/__init__.py",
+                "Lib/venv/scripts/nt/venvlauncher.exe",
+                "Lib/venv/scripts/nt/venvwlauncher.exe"
+            )) {
+                if (-not ($archive.Entries.FullName -contains $requiredEntry)) {
+                    throw "Portable Python ZIP is missing $requiredEntry."
                 }
             }
         }
         finally {
-            $packageStream.Dispose()
+            $archive.Dispose()
         }
-        $actualPackageHash = (
-            Get-FileHash -LiteralPath $packagePath -Algorithm SHA512
-        ).Hash.ToLowerInvariant()
-        if ($actualPackageHash -ne [string]$manifest.package_sha512) {
-            throw "Reassembled portable Python source package is invalid."
-        }
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
         $expandedPath = Join-Path $testRoot "expanded"
         [System.IO.Compression.ZipFile]::ExtractToDirectory(
             $packagePath,
             $expandedPath
         )
-        $basePython = Join-Path $expandedPath "tools\python.exe"
+        foreach ($launcher in @("venvlauncher.exe", "venvwlauncher.exe")) {
+            Copy-Item `
+                -LiteralPath (Join-Path `
+                    $expandedPath `
+                    ("Lib\venv\scripts\nt\" + $launcher)) `
+                -Destination (Join-Path $expandedPath $launcher)
+        }
+        $basePython = Join-Path $expandedPath "python.exe"
     }
     else {
         # Extracted end-user package: rr init has already placed the runtime

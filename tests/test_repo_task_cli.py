@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import hashlib
-import io
-import json
 import unittest
-import zipfile
 from pathlib import Path
 
 
@@ -25,48 +21,31 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('$pythonVersion = "3.12.10"', initializer)
         self.assertIn(
-            "bbda4dcf688a94211b62d50968a91b38",
+            "9dc4d0b051bfd5b881f10846ee023fd7",
             initializer,
         )
+        self.assertIn("mirrors.huaweicloud.com/python/3.12.10", initializer)
+        self.assertIn("python-3.12.10-amd64.zip", initializer)
+        self.assertIn("$pythonPackageSize = 32399384", initializer)
         self.assertIn("pypi.tuna.tsinghua.edu.cn", initializer)
         self.assertIn("Assert-LiveTasksInactive", initializer)
         self.assertIn("Install-PortablePython", initializer)
-        self.assertIn("python-3.12.10-portable.nupkg", initializer)
         self.assertIn("ExtractToDirectory", initializer)
         self.assertIn("Unsafe path in portable Python package", initializer)
+        self.assertIn('"Lib/venv/__init__.py"', initializer)
+        self.assertIn('"Lib/ensurepip/__init__.py"', initializer)
+        self.assertIn('"venvlauncher.exe"', initializer)
+        self.assertIn('"venvwlauncher.exe"', initializer)
         self.assertNotIn("Start-Process", initializer)
         self.assertNotIn("Find-CompatibleBasePython", initializer)
         self.assertNotIn("HKCU:", initializer)
         self.assertNotIn("HKLM:", initializer)
         self.assertNotIn("https://www.python.org/ftp", initializer)
+        self.assertNotIn("gitee.com/smhe/reverse_repo/raw/main/dist", initializer)
 
-    def test_bundled_python_is_pinned_complete_nuget_runtime(self):
-        manifest = json.loads(
-            (
-                ROOT / "dist" / "python-3.12.10-portable.parts.json"
-            ).read_text(encoding="utf-8")
-        )
-        chunks = []
-        for part in manifest["parts"]:
-            content = (ROOT / "dist" / part["name"]).read_bytes()
-            self.assertEqual(len(content), part["size"])
-            self.assertEqual(hashlib.sha256(content).hexdigest(), part["sha256"])
-            chunks.append(content)
-        package = b"".join(chunks)
-        self.assertEqual(len(package), manifest["package_size"])
-        digest = hashlib.sha512(package).hexdigest()
-        self.assertEqual(
-            digest,
-            "bbda4dcf688a94211b62d50968a91b38"
-            "f305d0b8d1ecd90269f74a86f8a0a4fc"
-            "ebb7ca162a0753a47691eb3df0c964009"
-            "bd3d8194c6fd19afae8d5fd01e1cc0f",
-        )
-        with zipfile.ZipFile(io.BytesIO(package)) as archive:
-            names = set(archive.namelist())
-        self.assertIn("tools/python.exe", names)
-        self.assertIn("tools/Lib/venv/__init__.py", names)
-        self.assertIn("tools/Lib/ensurepip/__init__.py", names)
+    def test_python_runtime_is_not_bundled_in_current_tree(self):
+        bundled = list((ROOT / "dist").glob("python-3.12.10-portable*"))
+        self.assertEqual(bundled, [])
 
     def test_initializer_accepts_qmt_install_roots_and_waits_for_userdata(self):
         initializer = (

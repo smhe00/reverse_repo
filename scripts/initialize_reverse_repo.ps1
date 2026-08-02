@@ -12,15 +12,13 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Get-ReverseRepoRoot
 $windowsPowerShell = Get-ReverseRepoPowerShell
 $pythonVersion = "3.12.10"
-$pythonPackageSha512 = (
-    "bbda4dcf688a94211b62d50968a91b38f305d0b8d1ecd90269f74a86f8a0a4fc" +
-    "ebb7ca162a0753a47691eb3df0c964009bd3d8194c6fd19afae8d5fd01e1cc0f"
+$pythonPackageUri = (
+    "https://mirrors.huaweicloud.com/python/3.12.10/" +
+    "python-3.12.10-amd64.zip"
 )
-$pythonPackageManifestPath = Join-Path `
-    $repoRoot `
-    "dist\python-3.12.10-portable.parts.json"
-$pythonPackageBaseUri = (
-    "https://gitee.com/smhe/reverse_repo/raw/main/dist"
+$pythonPackageSize = 32399384
+$pythonPackageSha256 = (
+    "9dc4d0b051bfd5b881f10846ee023fd7cea8251871e78b6e8920e5630b15e3bb"
 )
 $runtimeDirectory = Join-Path $repoRoot ".runtime\python312"
 $runtimePython = Join-Path $runtimeDirectory "python.exe"
@@ -146,7 +144,7 @@ function Get-VerifiedRemoteFile {
                 [long]$actualSize -ne $ExpectedSize -or
                 $actualHash -ne $ExpectedSha256.ToLowerInvariant()
             ) {
-                throw "Downloaded Python part failed size or SHA-256 check."
+                throw "Downloaded file failed size or SHA-256 check."
             }
             return
         }
@@ -207,25 +205,6 @@ function Install-PortablePython {
             "$runtimeDirectory. Move it aside before retrying."
         )
     }
-    if (-not (
-        Test-Path -LiteralPath $pythonPackageManifestPath -PathType Leaf
-    )) {
-        throw (
-            "Portable Python part manifest is missing: " +
-            $pythonPackageManifestPath
-        )
-    }
-    $manifest = Get-Content -LiteralPath $pythonPackageManifestPath -Raw |
-        ConvertFrom-Json
-    if (
-        [int]$manifest.schema_version -ne 1 -or
-        [string]$manifest.python_version -ne $pythonVersion -or
-        [string]$manifest.package_sha512 -ne $pythonPackageSha512 -or
-        [long]$manifest.package_size -le 0 -or
-        @($manifest.parts).Count -eq 0
-    ) {
-        throw "Portable Python part manifest is invalid."
-    }
     $stagingRoot = Join-Path `
         $bootstrapDirectory `
         ("python_" + [guid]::NewGuid().ToString("N"))
@@ -233,58 +212,13 @@ function Install-PortablePython {
         New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
         $pythonPackagePath = Join-Path `
             $stagingRoot `
-            "python-3.12.10-portable.nupkg"
-        $packageStream = [System.IO.File]::Create($pythonPackagePath)
-        try {
-            $partNumber = 0
-            foreach ($part in @($manifest.parts)) {
-                $partNumber += 1
-                $partName = [string]$part.name
-                $partSize = [long]$part.size
-                $partHash = [string]$part.sha256
-                if (
-                    $partName -notmatch `
-                        "^python-3\.12\.10-portable\.part[0-9]{2}$" -or
-                    $partSize -le 0 -or
-                    $partHash -notmatch "^[0-9a-f]{64}$"
-                ) {
-                    throw "Invalid portable Python part manifest entry."
-                }
-                Write-Output (
-                    "下载便携Python分片 $partNumber/" +
-                    @($manifest.parts).Count
-                )
-                $partPath = Join-Path $stagingRoot $partName
-                Get-VerifiedRemoteFile `
-                    -Uri ($pythonPackageBaseUri.TrimEnd("/") + "/" + $partName) `
-                    -Path $partPath `
-                    -ExpectedSize $partSize `
-                    -ExpectedSha256 $partHash
-                $partStream = [System.IO.File]::OpenRead($partPath)
-                try {
-                    $partStream.CopyTo($packageStream)
-                }
-                finally {
-                    $partStream.Dispose()
-                }
-                Remove-Item -LiteralPath $partPath -Force
-            }
-        }
-        finally {
-            $packageStream.Dispose()
-        }
-        if (
-            (Get-Item -LiteralPath $pythonPackagePath).Length -ne
-                [long]$manifest.package_size
-        ) {
-            throw "Reassembled portable Python package size mismatch."
-        }
-        $actualHash = (
-            Get-FileHash -LiteralPath $pythonPackagePath -Algorithm SHA512
-        ).Hash.ToLowerInvariant()
-        if ($actualHash -ne $pythonPackageSha512) {
-            throw "Reassembled portable Python package SHA-512 mismatch."
-        }
+            "python-3.12.10-amd64.zip"
+        Write-Output "从华为云下载便携Python $pythonVersion x64。"
+        Get-VerifiedRemoteFile `
+            -Uri $pythonPackageUri `
+            -Path $pythonPackagePath `
+            -ExpectedSize $pythonPackageSize `
+            -ExpectedSha256 $pythonPackageSha256
 
         Add-Type -AssemblyName System.IO.Compression
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -303,24 +237,41 @@ function Install-PortablePython {
                     throw "Unsafe path in portable Python package: $name"
                 }
             }
-            if (-not (
-                $archive.Entries.FullName -contains "tools/python.exe"
+            foreach ($requiredEntry in @(
+                "python.exe",
+                "Lib/venv/__init__.py",
+                "Lib/ensurepip/__init__.py",
+                "Lib/venv/scripts/nt/venvlauncher.exe",
+                "Lib/venv/scripts/nt/venvwlauncher.exe"
             )) {
-                throw (
-                    "Portable Python package does not contain " +
-                    "tools/python.exe."
-                )
+                if (-not ($archive.Entries.FullName -contains $requiredEntry)) {
+                    throw (
+                        "Portable Python package is incomplete: " +
+                        "$requiredEntry is missing."
+                    )
+                }
             }
         }
         finally {
             $archive.Dispose()
         }
+        $stagingRuntime = Join-Path $stagingRoot "runtime"
+        New-Item -ItemType Directory -Path $stagingRuntime | Out-Null
         [System.IO.Compression.ZipFile]::ExtractToDirectory(
             $pythonPackagePath,
-            $stagingRoot
+            $stagingRuntime
         )
-        $stagingTools = Join-Path $stagingRoot "tools"
-        $stagingPython = Join-Path $stagingTools "python.exe"
+        # The official install-manager ZIP carries the two standard venv
+        # launchers under Lib, while venv expects root copies in this
+        # installer-free layout. Copying them stays inside the private runtime.
+        foreach ($launcher in @("venvlauncher.exe", "venvwlauncher.exe")) {
+            Copy-Item `
+                -LiteralPath (Join-Path `
+                    $stagingRuntime `
+                    ("Lib\venv\scripts\nt\" + $launcher)) `
+                -Destination (Join-Path $stagingRuntime $launcher)
+        }
+        $stagingPython = Join-Path $stagingRuntime "python.exe"
         Assert-PythonExecutable -PythonPath $stagingPython
         New-Item `
             -ItemType Directory `
@@ -331,7 +282,7 @@ function Install-PortablePython {
             Remove-Item -LiteralPath $runtimeDirectory -Force
         }
         Move-Item `
-            -LiteralPath $stagingTools `
+            -LiteralPath $stagingRuntime `
             -Destination $runtimeDirectory
     }
     finally {
