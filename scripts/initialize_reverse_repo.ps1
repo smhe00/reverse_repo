@@ -563,11 +563,11 @@ function Initialize-AccountBinding {
     }
     $bindingPath = Join-Path $repoRoot "config\$bindingName"
     if (Test-Path -LiteralPath $bindingPath -PathType Leaf) {
-        Write-Output "$Environment account binding already exists."
+        Write-Host "$Environment account binding already exists."
         return $true
     }
     $label = if ($Environment -eq "live") { "实盘" } else { "模拟" }
-    Write-Output "请启动并登录${label}miniQMT；绑定操作只查询账户，不下单。"
+    Write-Host "请启动并登录${label}miniQMT；绑定操作只查询账户，不下单。"
     $answer = Read-Host "准备好后输入Y继续，输入N稍后手工绑定 [Y/n]"
     if (
         -not [string]::IsNullOrWhiteSpace($answer) `
@@ -580,7 +580,8 @@ function Initialize-AccountBinding {
         -NoProfile `
         -ExecutionPolicy Bypass `
         -File (Join-Path $repoRoot "bind.ps1") `
-        $Environment
+        $Environment |
+        Out-Host
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
         throw "$Environment account binding failed."
     }

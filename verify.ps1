@@ -25,6 +25,15 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
 & $windowsPowerShell `
     -NoProfile `
     -ExecutionPolicy Bypass `
+    -File (Join-Path `
+        $bundleRoot `
+        "tests\test_initializer_account_binding.ps1")
+if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+    throw "Account-binding Boolean gate verification failed."
+}
+& $windowsPowerShell `
+    -NoProfile `
+    -ExecutionPolicy Bypass `
     -File (Join-Path $bundleRoot "tests\test_portable_python_runtime.ps1")
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Portable Python isolation verification failed."

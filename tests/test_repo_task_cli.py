@@ -62,6 +62,16 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("两个路径可能填反了", initializer)
         self.assertNotIn('Prompt "实盘miniQMT路径"', initializer)
 
+    def test_account_binding_returns_only_a_boolean_success_value(self):
+        initializer = (
+            ROOT / "scripts" / "initialize_reverse_repo.ps1"
+        ).read_text(encoding="utf-8")
+        body = initializer.split("function Initialize-AccountBinding", 1)[1]
+        body = body.split("Assert-LiveTasksInactive", 1)[0]
+        self.assertNotIn("Write-Output", body)
+        self.assertIn("Write-Host", body)
+        self.assertIn("Out-Host", body)
+
     def test_runtime_is_pinned_and_powershell_51_compatible(self):
         requirements = (ROOT / "requirements.txt").read_text(
             encoding="utf-8"
