@@ -83,6 +83,9 @@ class _FailingNotifier:
 
 
 class AfternoonRecoveryTests(unittest.TestCase):
+    def test_strategy_name_fits_observed_qmt_field_limit(self):
+        self.assertLessEqual(len(STRATEGY_NAME), 23)
+
     def test_second_cash_ratio_accepts_closed_unit_interval(self):
         self.assertEqual(_parse_cash_usage_ratio(0), 0.0)
         self.assertEqual(_parse_cash_usage_ratio("0.45"), 0.45)

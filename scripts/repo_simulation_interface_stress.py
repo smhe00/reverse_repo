@@ -17,10 +17,14 @@ from pathlib import Path
 from typing import Any
 
 from repo_execution_core import (
+    ACTIVE_ORDER_STATUSES,
     ExecutionMutex,
+    PENDING_CANCEL_STATUSES,
+    TERMINAL_ORDER_STATUSES as CORE_TERMINAL_ORDER_STATUSES,
     atomic_write_json,
     is_exchange_trading_day,
     query_asset_strict,
+    qmt_strategy_name,
     safe_exception,
     select_bound_account,
 )
@@ -30,8 +34,9 @@ from repo_failure_alert import (
 )
 
 
-STRATEGY_NAME = "simulation_interface_stress_5hz_v1"
+STRATEGY_NAME = qmt_strategy_name("repo_stress_5hz_v1")
 PRIMARY_SYMBOL = "511880.SH"
+CANCEL_PROBE_SYMBOL = PRIMARY_SYMBOL
 QUOTE_SYMBOLS = (
     PRIMARY_SYMBOL,
     "511010.SH",
@@ -49,8 +54,9 @@ ROUND_TRIP_SPECS = (
     ("gold_etf", "518880.SH", 0.20),
     ("cross_border_etf", "513100.SH", 0.20),
 )
-TERMINAL_ORDER_STATUSES = {52, 53, 54, 55, 56, 57}
-CANCELABLE_ORDER_STATUSES = {48, 49, 50, 55}
+TERMINAL_ORDER_STATUSES = set(CORE_TERMINAL_ORDER_STATUSES)
+CANCELABLE_ORDER_STATUSES = set(ACTIVE_ORDER_STATUSES)
+CANCEL_PENDING_ORDER_STATUSES = set(PENDING_CANCEL_STATUSES)
 FILLED_ORDER_STATUS = 56
 LOT_SIZE = 100
 PRICE_TICK = 0.001
@@ -130,6 +136,9 @@ class StressMetrics:
         self.current_consecutive_query_failures = 0
         self.position_residuals: dict[str, int] = {}
         self.unresolved_stress_order_count = 0
+        self.cancel_probe_completed = False
+        self.cancel_probe_status: int | None = None
+        self.cancel_probe_error = ""
 
     def record_cycle(self, latency: float, lag: float, ok: bool) -> None:
         with self._lock:
@@ -156,23 +165,32 @@ class StressMetrics:
                 self.query_errors[name] += 1
 
     def record_tick(self, symbol: str, payload: object) -> None:
-        if isinstance(payload, Mapping) and isinstance(
-            payload.get(symbol), Mapping
-        ):
-            payload = payload[symbol]
-        with self._lock:
-            self.tick_counts[symbol] += 1
-            self._record_quote_observation(
-                symbol=symbol,
-                payload=payload,
-                unique_counts=self.tick_unique_counts,
-                duplicate_counts=self.tick_duplicate_counts,
-                missing_counts=self.tick_missing_timestamp_counts,
-                interval_values=self.tick_source_intervals_seconds,
-                arrival_age_values=self.tick_arrival_age_seconds,
-                regressions=self.tick_timestamp_regressions,
-                latest_times=self.latest_tick_epoch_ms,
+        observations: list[object] = []
+        candidate = payload
+        if isinstance(payload, Mapping) and symbol in payload:
+            candidate = payload.get(symbol)
+        if isinstance(candidate, Mapping):
+            observations.append(candidate)
+        elif isinstance(candidate, (list, tuple)):
+            observations.extend(
+                item for item in candidate if isinstance(item, Mapping)
             )
+        if not observations:
+            observations.append(candidate)
+        with self._lock:
+            for observation in observations:
+                self.tick_counts[symbol] += 1
+                self._record_quote_observation(
+                    symbol=symbol,
+                    payload=observation,
+                    unique_counts=self.tick_unique_counts,
+                    duplicate_counts=self.tick_duplicate_counts,
+                    missing_counts=self.tick_missing_timestamp_counts,
+                    interval_values=self.tick_source_intervals_seconds,
+                    arrival_age_values=self.tick_arrival_age_seconds,
+                    regressions=self.tick_timestamp_regressions,
+                    latest_times=self.latest_tick_epoch_ms,
+                )
 
     def record_quote_poll(self, payload: object) -> None:
         if not isinstance(payload, Mapping):
@@ -339,6 +357,9 @@ class StressMetrics:
                 "unresolved_stress_order_count": (
                     self.unresolved_stress_order_count
                 ),
+                "cancel_probe_completed": self.cancel_probe_completed,
+                "cancel_probe_status": self.cancel_probe_status,
+                "cancel_probe_error": self.cancel_probe_error,
             }
 
 
@@ -446,6 +467,49 @@ def _window_for_now(
     return None
 
 
+def _remaining_windows(
+    windows: Sequence[StressWindow],
+    now: datetime,
+) -> tuple[StressWindow, ...]:
+    return tuple(
+        StressWindow(max(window.start, now), window.end)
+        for window in windows
+        if window.end > now
+    )
+
+
+def _next_trade_at(
+    windows: Sequence[StressWindow],
+    now: datetime,
+    interval_minutes: int,
+) -> datetime:
+    interval = timedelta(minutes=max(int(interval_minutes), 5))
+    for window in windows:
+        if window.end <= now:
+            continue
+        first = window.start + timedelta(minutes=3)
+        if now < first:
+            return first
+        elapsed = now - first
+        slots = int(elapsed // interval) + 1
+        candidate = first + slots * interval
+        if candidate < window.end:
+            return candidate
+    return windows[-1].end
+
+
+def _next_probe_at(
+    windows: Sequence[StressWindow],
+    now: datetime,
+) -> datetime:
+    for window in windows:
+        if window.start <= now < window.end:
+            return now
+        if now < window.start:
+            return window.start
+    return windows[-1].end
+
+
 def _next_window_start(
     now: datetime,
     windows: Sequence[StressWindow],
@@ -507,6 +571,27 @@ def _fresh_quote(xtdata: object, symbol: str) -> tuple[float, float, int]:
     if not 0 <= age <= 3:
         raise RuntimeError(f"quote is stale for {symbol}: {age:.3f}s")
     return bid, ask, raw_time
+
+
+def _wait_fresh_quote(
+    xtdata: object,
+    symbol: str,
+    *,
+    timeout_seconds: float = 10.0,
+) -> tuple[float, float, int]:
+    deadline = time.monotonic() + max(float(timeout_seconds), 0.2)
+    last_error: RuntimeError | None = None
+    while True:
+        try:
+            return _fresh_quote(xtdata, symbol)
+        except RuntimeError as exc:
+            last_error = exc
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"no fresh quote arrived for {symbol} within "
+                f"{timeout_seconds:g}s: {last_error}"
+            ) from last_error
+        time.sleep(0.2)
 
 
 def _split_volume(total_volume: int, children: int = 5) -> list[int]:
@@ -577,6 +662,7 @@ def _submit_children(
     price: float,
     buy: bool,
     cycle_number: int,
+    remark_prefix: str,
     stop_event: threading.Event,
     writer: JsonlWriter,
 ) -> int:
@@ -586,8 +672,8 @@ def _submit_children(
         if stop_event.is_set():
             break
         remark = (
-            f"sim_stress_{cycle_number:03d}_"
-            f"{'b' if buy else 's'}_{index:02d}"
+            f"{remark_prefix}{cycle_number:03d}"
+            f"{'b' if buy else 's'}{index:02d}"
         )
         order_id = int(
             trader.order_stock(
@@ -639,6 +725,150 @@ def _submit_children(
     return traded_total
 
 
+def _cancel_probe_once(
+    *,
+    trader: object,
+    account: object,
+    xtconstant: object,
+    xtdata: object,
+    remark_prefix: str,
+    stop_event: threading.Event,
+    writer: JsonlWriter,
+) -> int:
+    """Exercise query-visible -> cancel -> terminal on 100 money-ETF shares."""
+    baseline = _position_volume(
+        _required_sequence(
+            trader.query_stock_positions(account),
+            "position list",
+        ),
+        CANCEL_PROBE_SYMBOL,
+    )
+    bid, _, _ = _wait_fresh_quote(xtdata, CANCEL_PROBE_SYMBOL)
+    price = (
+        math.floor((bid * 0.95) / PRICE_TICK + 1e-9)
+        * PRICE_TICK
+    )
+    price = round(max(price, PRICE_TICK), 3)
+    remark = f"{remark_prefix}cancel"
+    order_id = int(
+        trader.order_stock(
+            account,
+            CANCEL_PROBE_SYMBOL,
+            int(xtconstant.STOCK_BUY),
+            LOT_SIZE,
+            int(xtconstant.FIX_PRICE),
+            price,
+            STRATEGY_NAME,
+            remark,
+        )
+    )
+    writer.write(
+        "order_submitted",
+        symbol=CANCEL_PROBE_SYMBOL,
+        side="BUY",
+        volume=LOT_SIZE,
+        price=price,
+        order_id=order_id,
+        remark=remark,
+        purpose="cancel_probe",
+    )
+    if order_id <= 0:
+        raise RuntimeError(f"cancel probe submission was rejected: {order_id}")
+
+    latest = None
+    query_deadline = time.monotonic() + 5
+    while time.monotonic() < query_deadline and not stop_event.is_set():
+        for order in _required_sequence(
+            trader.query_stock_orders(account, False),
+            "order list",
+        ):
+            if int(getattr(order, "order_id", -1)) == order_id:
+                latest = order
+                break
+        if latest is not None:
+            break
+        time.sleep(0.2)
+    if latest is None:
+        raise RuntimeError(f"cancel probe order {order_id} was never queryable")
+    status = int(getattr(latest, "order_status", 255))
+    if status in TERMINAL_ORDER_STATUSES:
+        writer.write(
+            "order_terminal",
+            symbol=CANCEL_PROBE_SYMBOL,
+            side="BUY",
+            order_id=order_id,
+            status=status,
+            requested_volume=LOT_SIZE,
+            traded_volume=int(getattr(latest, "traded_volume", 0) or 0),
+            purpose="cancel_probe",
+        )
+        traded = int(getattr(latest, "traded_volume", 0) or 0)
+        if traded > 0:
+            close_bid, _, _ = _wait_fresh_quote(xtdata, CANCEL_PROBE_SYMBOL)
+            closed = _submit_children(
+                trader=trader,
+                account=account,
+                xtconstant=xtconstant,
+                symbol=CANCEL_PROBE_SYMBOL,
+                volumes=[traded],
+                price=_crossing_price(close_bid, buy=False),
+                buy=False,
+                cycle_number=999,
+                remark_prefix=remark_prefix,
+                stop_event=stop_event,
+                writer=writer,
+            )
+            final = _position_volume(
+                _required_sequence(
+                    trader.query_stock_positions(account),
+                    "position list",
+                ),
+                CANCEL_PROBE_SYMBOL,
+            )
+            if closed != traded or final != baseline:
+                raise RuntimeError(
+                    "cancel probe filled before cancellation and cleanup "
+                    f"failed: filled={traded}, closed={closed}, "
+                    f"baseline={baseline}, final={final}"
+                )
+        raise RuntimeError(
+            f"cancel probe reached terminal status {status} before cancellation"
+        )
+
+    cancel_result = int(trader.cancel_order_stock(account, order_id))
+    writer.write(
+        "cancel_requested",
+        order_id=order_id,
+        result=cancel_result,
+        purpose="cancel_probe",
+    )
+    terminal = _wait_order(
+        trader,
+        account,
+        order_id,
+        timeout_seconds=15,
+        stop_event=stop_event,
+    )
+    status = int(getattr(terminal, "order_status", 255))
+    traded = int(getattr(terminal, "traded_volume", 0) or 0)
+    writer.write(
+        "order_terminal",
+        symbol=CANCEL_PROBE_SYMBOL,
+        side="BUY",
+        order_id=order_id,
+        status=status,
+        requested_volume=LOT_SIZE,
+        traded_volume=traded,
+        purpose="cancel_probe",
+    )
+    if status not in {53, 54} or traded != 0:
+        raise RuntimeError(
+            f"cancel probe did not finish as a zero-fill cancellation: "
+            f"status={status}, traded={traded}"
+        )
+    return status
+
+
 def _round_trip_once(
     *,
     trader: object,
@@ -649,6 +879,7 @@ def _round_trip_once(
     symbol: str,
     cash_ratio: float,
     cycle_number: int,
+    remark_prefix: str,
     stop_event: threading.Event,
     writer: JsonlWriter,
 ) -> None:
@@ -661,7 +892,7 @@ def _round_trip_once(
         trader,
         account,
     ).conservative_available_cash
-    bid, ask, _ = _fresh_quote(xtdata, symbol)
+    bid, ask, _ = _wait_fresh_quote(xtdata, symbol)
     budget = max(available_cash, 0.0) * float(cash_ratio)
     volume = int(budget / _crossing_price(ask, buy=True) / LOT_SIZE) * LOT_SIZE
     volumes = _split_volume(volume)
@@ -678,6 +909,7 @@ def _round_trip_once(
         price=_crossing_price(ask, buy=True),
         buy=True,
         cycle_number=cycle_number,
+        remark_prefix=remark_prefix,
         stop_event=stop_event,
         writer=writer,
     )
@@ -688,7 +920,7 @@ def _round_trip_once(
         remaining = bought - sold_total
         if remaining <= 0:
             break
-        bid, _, _ = _fresh_quote(xtdata, symbol)
+        bid, _, _ = _wait_fresh_quote(xtdata, symbol)
         sold_total += _submit_children(
             trader=trader,
             account=account,
@@ -698,6 +930,7 @@ def _round_trip_once(
             price=_crossing_price(bid, buy=False),
             buy=False,
             cycle_number=cycle_number * 10 + attempt,
+            remark_prefix=remark_prefix,
             stop_event=stop_event,
             writer=writer,
         )
@@ -722,12 +955,46 @@ def _trade_worker(
     windows: Sequence[StressWindow],
     interval_minutes: int,
     stop_new_orders_at: datetime,
+    remark_prefix: str,
     stop_event: threading.Event,
     metrics: StressMetrics,
     writer: JsonlWriter,
 ) -> None:
+    probe_at = _next_probe_at(windows, datetime.now().astimezone())
+    while not stop_event.is_set():
+        now = datetime.now().astimezone()
+        if now >= probe_at:
+            break
+        stop_event.wait(min((probe_at - now).total_seconds(), 1.0))
+    if stop_event.is_set() or _window_for_now(
+        datetime.now().astimezone(), windows
+    ) is None:
+        return
+    try:
+        cancel_status = _cancel_probe_once(
+            trader=trader,
+            account=account,
+            xtconstant=xtconstant,
+            xtdata=xtdata,
+            remark_prefix=remark_prefix,
+            stop_event=stop_event,
+            writer=writer,
+        )
+        with metrics._lock:
+            metrics.cancel_probe_completed = True
+            metrics.cancel_probe_status = cancel_status
+    except Exception as exc:  # noqa: BLE001
+        message = safe_exception(exc)
+        with metrics._lock:
+            metrics.cancel_probe_error = message
+        writer.write("cancel_probe_error", error=message)
+
     cycle_number = 0
-    next_at = windows[0].start + timedelta(minutes=3)
+    next_at = _next_trade_at(
+        windows,
+        datetime.now().astimezone(),
+        interval_minutes,
+    )
     while not stop_event.is_set() and next_at < stop_new_orders_at:
         now = datetime.now().astimezone()
         active = _window_for_now(now, windows)
@@ -750,6 +1017,7 @@ def _trade_worker(
                 symbol=symbol,
                 cash_ratio=ratio,
                 cycle_number=cycle_number,
+                remark_prefix=remark_prefix,
                 stop_event=stop_event,
                 writer=writer,
             )
@@ -788,10 +1056,20 @@ def _working_set_bytes() -> int | None:
             ("PeakPagefileUsage", ctypes.c_size_t),
         ]
 
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    psapi = ctypes.windll.psapi  # type: ignore[attr-defined]
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    psapi.GetProcessMemoryInfo.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(Counters),
+        ctypes.c_ulong,
+    ]
+    psapi.GetProcessMemoryInfo.restype = ctypes.c_int
     counters = Counters()
     counters.cb = ctypes.sizeof(counters)
-    result = ctypes.windll.psapi.GetProcessMemoryInfo(  # type: ignore[attr-defined]
-        ctypes.windll.kernel32.GetCurrentProcess(),  # type: ignore[attr-defined]
+    result = psapi.GetProcessMemoryInfo(
+        kernel32.GetCurrentProcess(),
         ctypes.byref(counters),
         counters.cb,
     )
@@ -848,6 +1126,8 @@ def _evaluate(summary: Mapping[str, object]) -> tuple[bool, list[str]]:
         failures.append("a stress-test symbol has a residual position")
     if int(summary.get("unresolved_stress_order_count", 999)):
         failures.append("a stress-test order is still unresolved")
+    if summary.get("cancel_probe_completed") is not True:
+        failures.append("money-ETF zero-fill cancellation probe did not complete")
     return not failures, failures
 
 
@@ -873,6 +1153,16 @@ def run_stress(args: argparse.Namespace) -> dict[str, object]:
         afternoon_end=args.afternoon_end,
         tzinfo=now.tzinfo,
     )
+    partial_session = bool(args.partial_session)
+    if not partial_session and now > windows[0].start + timedelta(seconds=5):
+        raise ValueError(
+            "full-day stress test started after its first measurement window"
+        )
+    measurement_windows = (
+        _remaining_windows(windows, now) if partial_session else windows
+    )
+    if not measurement_windows:
+        raise ValueError("no stress measurement window remains today")
     stop_new_orders_at = datetime.combine(
         trade_date,
         args.stop_new_orders,
@@ -880,6 +1170,9 @@ def run_stress(args: argparse.Namespace) -> dict[str, object]:
     )
     if not windows[1].start < stop_new_orders_at <= windows[1].end - timedelta(minutes=5):
         raise ValueError("stop-new-orders must leave at least five cleanup minutes")
+    remark_prefix = (
+        f"st{now:%m%d%H%M}{random.randint(0, 0xFFFF):04x}_"
+    )
 
     metrics = StressMetrics()
     writer = JsonlWriter(Path(args.samples))
@@ -896,6 +1189,12 @@ def run_stress(args: argparse.Namespace) -> dict[str, object]:
         "environment": "simulation",
         "trade_date": trade_date.isoformat(),
         "frequency_hz": frequency,
+        "partial_session": partial_session,
+        "measurement_windows": [
+            {"start": window.start.isoformat(), "end": window.end.isoformat()}
+            for window in measurement_windows
+        ],
+        "remark_prefix": remark_prefix,
         "windows": [
             {"start": window.start.isoformat(), "end": window.end.isoformat()}
             for window in windows
@@ -987,6 +1286,7 @@ def run_stress(args: argparse.Namespace) -> dict[str, object]:
                 "windows": windows,
                 "interval_minutes": int(args.trade_interval_minutes),
                 "stop_new_orders_at": stop_new_orders_at,
+                "remark_prefix": remark_prefix,
                 "stop_event": stop_event,
                 "metrics": metrics,
                 "writer": writer,
@@ -1075,7 +1375,10 @@ def run_stress(args: argparse.Namespace) -> dict[str, object]:
                 )
                 last_resource_sample = time.monotonic()
                 snapshot = metrics.summary(
-                    expected_cycles=_expected_cycles(windows, frequency)
+                    expected_cycles=_expected_cycles(
+                        measurement_windows,
+                        frequency,
+                    )
                 )
                 atomic_write_json(
                     Path(args.checkpoint),
@@ -1098,7 +1401,7 @@ def run_stress(args: argparse.Namespace) -> dict[str, object]:
             remark = str(getattr(order, "order_remark", "") or "")
             status = int(getattr(order, "order_status", 255))
             if (
-                remark.startswith("sim_stress_")
+                remark.startswith(remark_prefix)
                 and status in CANCELABLE_ORDER_STATUSES
             ):
                 trader.cancel_order_stock(
@@ -1116,7 +1419,7 @@ def run_stress(args: argparse.Namespace) -> dict[str, object]:
                 order
                 for order in final_orders
                 if str(getattr(order, "order_remark", "") or "").startswith(
-                    "sim_stress_"
+                    remark_prefix
                 )
                 and int(getattr(order, "order_status", 255))
                 not in TERMINAL_ORDER_STATUSES
@@ -1136,7 +1439,7 @@ def run_stress(args: argparse.Namespace) -> dict[str, object]:
                 for symbol, baseline in baseline_positions.items()
             }
         summary = metrics.summary(
-            expected_cycles=_expected_cycles(windows, frequency)
+            expected_cycles=_expected_cycles(measurement_windows, frequency)
         )
         passed, failures = _evaluate(summary)
         report.update(
@@ -1197,6 +1500,11 @@ def main() -> int:
     parser.add_argument("--afternoon-end", type=_parse_clock, default=clock_time(15, 5))
     parser.add_argument("--stop-new-orders", type=_parse_clock, default=clock_time(14, 50))
     parser.add_argument("--trade-interval-minutes", type=int, default=20)
+    parser.add_argument(
+        "--partial-session",
+        action="store_true",
+        help="Measure only the remaining windows; intended for same-day diagnostics.",
+    )
     args = parser.parse_args()
 
     notifier = None

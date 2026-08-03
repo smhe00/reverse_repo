@@ -20,12 +20,16 @@ from repo_execution_core import (  # noqa: E402
     ExecutionMutex,
     OrderClass,
     OrderView,
+    QuoteBook,
+    QuoteValidationError,
     account_id_fingerprint,
     build_book_plan,
     classify_order,
     journal_matches_verification,
     load_account_binding,
+    normalize_repo_rate,
     qmt_path_fingerprint,
+    qmt_strategy_name,
     read_cash_snapshot,
     reconcile_cash_cap,
     reverse_repo_strategy_config,
@@ -52,6 +56,14 @@ def _view(status: int, traded: int = 0, volume: int = 10) -> OrderView:
 
 
 class CoreSafetyTests(unittest.TestCase):
+    def test_qmt_strategy_name_rejects_values_the_broker_would_truncate(self):
+        self.assertEqual(qmt_strategy_name("repo_morning_v2"), "repo_morning_v2")
+        self.assertEqual(qmt_strategy_name("repo_afternoon_v2"), "repo_afternoon_v2")
+        with self.assertRaisesRegex(ValueError, "23-character"):
+            qmt_strategy_name("gc001_daily_90pct_093042_state_machine_v2")
+        with self.assertRaisesRegex(ValueError, "ASCII"):
+            qmt_strategy_name("逆回购策略")
+
     def test_strategy_config_is_canonical_and_binds_only_strategy_fields(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "runtime.json"
@@ -511,8 +523,6 @@ class CoreSafetyTests(unittest.TestCase):
                 )
 
     def test_book_plan_requires_descending_valid_depth(self):
-        from repo_execution_core import QuoteBook
-
         book = QuoteBook(
             symbol="204001.SH",
             quote_time_epoch_ms=1,
@@ -526,6 +536,28 @@ class CoreSafetyTests(unittest.TestCase):
         plan = build_book_plan(book, 150)
         self.assertTrue(plan.covers_requested_volume)
         self.assertEqual(plan.limit_rate_percent, 1.49)
+
+    def test_reverse_repo_bid_rate_must_be_finite_positive_and_on_tick(self):
+        for invalid in (0, -0.005, float("nan"), float("inf")):
+            with self.subTest(invalid=invalid), self.assertRaises(
+                QuoteValidationError
+            ):
+                normalize_repo_rate(invalid)
+        with self.assertRaisesRegex(QuoteValidationError, "0.005-percent tick"):
+            normalize_repo_rate(1.503)
+
+        zero_bid = QuoteBook(
+            symbol="204001.SH",
+            quote_time_epoch_ms=1,
+            quote_time=datetime.now().astimezone().isoformat(),
+            quote_age_seconds=0.1,
+            bid_prices=(0.0,),
+            bid_volumes=(100,),
+            ask_prices=(),
+            ask_volumes=(),
+        )
+        with self.assertRaisesRegex(QuoteValidationError, "must be positive"):
+            build_book_plan(zero_bid, 10)
 
 
 if __name__ == "__main__":

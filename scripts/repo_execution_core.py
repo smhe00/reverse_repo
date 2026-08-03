@@ -20,6 +20,23 @@ DEFAULT_FIRST_EXECUTION_TIME = "09:30:42"
 DEFAULT_SECOND_EXECUTION_TIME = "15:10:00"
 DEFAULT_FIRST_CASH_USAGE_RATIO = 0.90
 DEFAULT_SECOND_CASH_USAGE_RATIO = 1.0
+QMT_STRATEGY_NAME_MAX_CHARACTERS = 23
+
+
+def qmt_strategy_name(value: object) -> str:
+    """Validate a broker strategy identifier before QMT can truncate it."""
+    text = str(value).strip()
+    if not text:
+        raise ValueError("QMT strategy name cannot be empty")
+    if re.fullmatch(r"[A-Za-z0-9_.-]+", text) is None:
+        raise ValueError(
+            "QMT strategy name must use ASCII letters, digits, dot, dash, or underscore"
+        )
+    if len(text) > QMT_STRATEGY_NAME_MAX_CHARACTERS:
+        raise ValueError(
+            "QMT strategy name exceeds the observed 23-character broker limit"
+        )
+    return text
 
 
 class BrokerUpdateSignal:

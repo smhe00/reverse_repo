@@ -41,6 +41,7 @@ from repo_execution_core import (
     query_all_orders_strict,
     query_asset_strict,
     query_order_strict,
+    qmt_strategy_name,
     read_quote_books,
     safe_exception,
     select_bound_account,
@@ -77,7 +78,7 @@ CANCEL_CONFIRM_SECONDS = 15.0
 ORDER_STATUS_RECONCILE_SECONDS = 1.0
 CANCEL_STATUS_RECONCILE_SECONDS = 0.5
 REMARK_PREFIX = "repo_morning_v2"
-STRATEGY_NAME = "gc001_daily_90pct_093042_state_machine_v2"
+STRATEGY_NAME = qmt_strategy_name("repo_morning_v2")
 
 
 def _parse_first_execution_time(value: object) -> clock_time:
@@ -119,6 +120,15 @@ def _parse_cash_usage_ratio(value: object) -> float:
             "cash usage ratio must be from 0 through 1"
         )
     return parsed
+
+
+def _parse_remark_root(value: object) -> str:
+    text = str(value).strip()
+    if re.fullmatch(r"[a-z0-9_]{3,15}", text) is None:
+        raise argparse.ArgumentTypeError(
+            "remark root must use 3-15 lowercase ASCII letters, digits, or underscore"
+        )
+    return text
 
 
 @dataclass(frozen=True)
@@ -249,6 +259,12 @@ def main() -> int:
         default=CASH_USAGE_RATIO,
     )
     parser.add_argument(
+        "--remark-root",
+        type=_parse_remark_root,
+        default=REMARK_PREFIX,
+        help="Simulation-only order namespace override for isolated diagnostics.",
+    )
+    parser.add_argument(
         "--alert-config",
         default="",
         help="Optional failure-email configuration; contains no SMTP password.",
@@ -319,6 +335,8 @@ def _run_morning_command(
     qmt_path = Path(args.qmt_path).resolve()
     if not qmt_path.is_dir():
         raise ValueError(f"QMT userdata path does not exist: {qmt_path}")
+    if args.environment != "simulation" and args.remark_root != REMARK_PREFIX:
+        raise ValueError("custom remark root is restricted to simulation")
     maximum_principal = int(args.maximum_principal_yuan)
     if maximum_principal < 0:
         raise ValueError("maximum principal cannot be negative")
@@ -341,7 +359,7 @@ def _run_morning_command(
         args.execution_time,
         timezone=now.tzinfo,
     )
-    remark_prefix = f"{REMARK_PREFIX}_{trade_date:%Y%m%d}_"
+    remark_prefix = f"{args.remark_root}_{trade_date:%Y%m%d}_"
     journal = AtomicJournal(
         Path(args.journal),
         strategy=STRATEGY_NAME,

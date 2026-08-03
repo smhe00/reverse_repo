@@ -1,25 +1,142 @@
 from __future__ import annotations
 
 import sys
+import threading
 import unittest
 from datetime import date, datetime, timezone
 from datetime import time as clock_time
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from repo_simulation_interface_stress import (  # noqa: E402
+    CANCELABLE_ORDER_STATUSES,
+    CANCEL_PENDING_ORDER_STATUSES,
     PRIMARY_SYMBOL,
+    STRATEGY_NAME,
+    TERMINAL_ORDER_STATUSES,
     StressMetrics,
     _distribution,
+    _cancel_probe_once,
     _evaluate,
     _expected_cycles,
+    _next_trade_at,
+    _next_probe_at,
+    _remaining_windows,
     _split_volume,
+    _wait_fresh_quote,
+    _working_set_bytes,
     build_windows,
 )
 
 
 class SimulationInterfaceStressTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "Windows process API")
+    def test_windows_working_set_probe_returns_positive_bytes(self):
+        value = _working_set_bytes()
+        self.assertIsInstance(value, int)
+        self.assertGreater(value, 0)
+
+    def test_trade_probe_waits_for_next_fresh_l1_snapshot(self):
+        with patch(
+            "repo_simulation_interface_stress._fresh_quote",
+            side_effect=[
+                RuntimeError("quote is stale"),
+                (1.5, 1.505, 123),
+            ],
+        ) as reader, patch(
+            "repo_simulation_interface_stress.time.sleep"
+        ) as sleeper:
+            quote = _wait_fresh_quote(object(), PRIMARY_SYMBOL)
+        self.assertEqual(quote, (1.5, 1.505, 123))
+        self.assertEqual(reader.call_count, 2)
+        sleeper.assert_called_once_with(0.2)
+
+    def test_order_status_sets_do_not_treat_active_or_cancel_pending_as_terminal(self):
+        self.assertEqual(TERMINAL_ORDER_STATUSES, {53, 54, 56, 57})
+        self.assertEqual(CANCELABLE_ORDER_STATUSES, {48, 49, 50, 55})
+        self.assertEqual(CANCEL_PENDING_ORDER_STATUSES, {51, 52})
+        self.assertFalse(
+            TERMINAL_ORDER_STATUSES
+            & (CANCELABLE_ORDER_STATUSES | CANCEL_PENDING_ORDER_STATUSES)
+        )
+
+    def test_cancel_probe_submits_queries_cancels_and_confirms_terminal(self):
+        class Trader:
+            def __init__(self):
+                self.canceled = False
+                self.submission = None
+
+            def order_stock(self, *args):
+                self.submission = args
+                return 99
+
+            def query_stock_orders(self, account, cancelable_only):
+                del account, cancelable_only
+                return [
+                    SimpleNamespace(
+                        order_id=99,
+                        order_status=54 if self.canceled else 50,
+                        traded_volume=0,
+                    )
+                ]
+
+            def query_stock_positions(self, account):
+                del account
+                return []
+
+            def cancel_order_stock(self, account, order_id):
+                del account
+                self.asserted_order_id = order_id
+                self.canceled = True
+                return 0
+
+        class Quotes:
+            @staticmethod
+            def get_full_tick(symbols):
+                return {
+                    symbols[0]: {
+                        "bidPrice": [1.5],
+                        "askPrice": [1.503],
+                        "time": int(datetime.now().timestamp() * 1000),
+                    }
+                }
+
+        class Writer:
+            def __init__(self):
+                self.records = []
+
+            def write(self, kind, **payload):
+                self.records.append((kind, payload))
+
+        trader = Trader()
+        writer = Writer()
+        status = _cancel_probe_once(
+            trader=trader,
+            account=object(),
+            xtconstant=SimpleNamespace(STOCK_BUY=23, STOCK_SELL=24, FIX_PRICE=11),
+            xtdata=Quotes(),
+            remark_prefix="st08031300abcd_",
+            stop_event=threading.Event(),
+            writer=writer,
+        )
+        self.assertEqual(status, 54)
+        self.assertTrue(trader.canceled)
+        self.assertEqual(trader.asserted_order_id, 99)
+        self.assertEqual(trader.submission[2], 23)
+        self.assertEqual(trader.submission[3], 100)
+        self.assertEqual(trader.submission[5], 1.425)
+        self.assertEqual(trader.submission[7], "st08031300abcd_cancel")
+        self.assertEqual(
+            [kind for kind, _ in writer.records],
+            ["order_submitted", "cancel_requested", "order_terminal"],
+        )
+
+    def test_strategy_name_fits_observed_qmt_field_limit(self):
+        self.assertLessEqual(len(STRATEGY_NAME), 23)
+
     def test_windows_are_isolated_from_functional_tests(self):
         windows = build_windows(
             date(2026, 8, 3),
@@ -32,6 +149,28 @@ class SimulationInterfaceStressTests(unittest.TestCase):
         self.assertEqual(windows[0].start.hour, 9)
         self.assertEqual(windows[1].end.time(), clock_time(15, 5))
         self.assertEqual(_expected_cycles(windows, 5.0), 69_900)
+
+        afternoon_now = datetime(
+            2026, 8, 3, 13, 7, tzinfo=timezone.utc
+        )
+        remaining = _remaining_windows(windows, afternoon_now)
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0].start, afternoon_now)
+        self.assertEqual(
+            _next_trade_at(windows, afternoon_now, 20),
+            datetime(2026, 8, 3, 13, 23, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            _next_probe_at(
+                windows,
+                datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc),
+            ),
+            datetime(2026, 8, 3, 13, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            _next_probe_at(windows, afternoon_now),
+            afternoon_now,
+        )
 
         invalid = (
             (clock_time(9, 40), clock_time(11, 30), clock_time(13), clock_time(15, 5)),
@@ -85,6 +224,7 @@ class SimulationInterfaceStressTests(unittest.TestCase):
             "trade_callbacks": 6,
             "position_residuals": {PRIMARY_SYMBOL: 0},
             "unresolved_stress_order_count": 0,
+            "cancel_probe_completed": True,
         }
         passed, failures = _evaluate(passing)
         self.assertTrue(passed)
@@ -95,6 +235,11 @@ class SimulationInterfaceStressTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertTrue(any("coverage" in item for item in failures))
 
+        failed = {**passing, "cancel_probe_completed": False}
+        passed, failures = _evaluate(failed)
+        self.assertFalse(passed)
+        self.assertTrue(any("cancellation probe" in item for item in failures))
+
     def test_metrics_counts_consecutive_failures(self):
         metrics = StressMetrics()
         metrics.record_cycle(0.01, 0.0, False)
@@ -102,6 +247,7 @@ class SimulationInterfaceStressTests(unittest.TestCase):
         metrics.record_cycle(0.01, 0.0, True)
         summary = metrics.summary(expected_cycles=3)
         self.assertEqual(summary["maximum_consecutive_query_failures"], 2)
+        self.assertFalse(summary["cancel_probe_completed"])
 
     def test_metrics_separates_unique_and_duplicate_l1_snapshots(self):
         metrics = StressMetrics()
@@ -155,6 +301,37 @@ class SimulationInterfaceStressTests(unittest.TestCase):
         self.assertEqual(
             summary["quote_poll_duplicate_counts"][PRIMARY_SYMBOL],
             1,
+        )
+
+    def test_metrics_unwraps_real_xtdata_tick_callback_batches(self):
+        metrics = StressMetrics()
+        metrics.record_tick(
+            PRIMARY_SYMBOL,
+            {
+                PRIMARY_SYMBOL: [
+                    {"time": 1_000},
+                    {"time": 4_000},
+                ]
+            },
+        )
+        summary = metrics.summary(expected_cycles=0)
+        self.assertEqual(summary["tick_counts"][PRIMARY_SYMBOL], 2)
+        self.assertEqual(
+            summary["tick_unique_counts"][PRIMARY_SYMBOL],
+            2,
+        )
+        self.assertEqual(
+            summary["tick_missing_timestamp_counts"].get(
+                PRIMARY_SYMBOL,
+                0,
+            ),
+            0,
+        )
+        self.assertEqual(
+            summary["tick_source_interval_seconds"][PRIMARY_SYMBOL][
+                "p50"
+            ],
+            3.0,
         )
 
 

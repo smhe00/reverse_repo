@@ -91,6 +91,12 @@ def main() -> int:
         "morning_order_lifecycle_ok",
         "afternoon_order_lifecycle_ok",
         "restart_recovery_ok",
+        "all_validation_orders_terminal",
+        "all_validation_remarks_unique",
+        "validation_namespaces_ok",
+        "validation_order_identity_ok",
+        "morning_broker_evidence_ok",
+        "afternoon_broker_evidence_ok",
     }
     checks = certificate.get("checks")
     if not isinstance(checks, dict):

@@ -23,6 +23,7 @@ from gc001_live_daily_90pct_093042 import (
     _finish_order_lifecycle,
     _parse_cash_usage_ratio,
     _parse_morning_execution_time,
+    _parse_remark_root,
     _reconcile_terminal,
     _recover_morning_order,
     _recover_unknown_submission,
@@ -178,6 +179,17 @@ def _active_controller(
 
 
 class MorningStateMachineExecutionTests(unittest.TestCase):
+    def test_strategy_name_fits_observed_qmt_field_limit(self):
+        self.assertLessEqual(len(STRATEGY_NAME), 23)
+
+    def test_simulation_debug_remark_root_is_short_and_strict(self):
+        self.assertEqual(_parse_remark_root("repo_debug_m1"), "repo_debug_m1")
+        for value in ("ab", "RepoDebug", "repo-debug", "x" * 16):
+            with self.subTest(value=value), self.assertRaises(
+                argparse.ArgumentTypeError
+            ):
+                _parse_remark_root(value)
+
     def test_configurable_morning_time_accepts_only_execution_window(self):
         for value in (
             "09:30:00",

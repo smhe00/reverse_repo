@@ -13,8 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from repo_simulation_validation import (  # noqa: E402
     _load_signing_key,
     _sign_payload,
+    _validation_order_evidence_checks,
 )
 from repo_execution_core import (  # noqa: E402
+    OrderView,
     reverse_repo_schedule_config_sha256,
 )
 from verify_repo_release_gate import (  # noqa: E402
@@ -26,6 +28,74 @@ from verify_repo_release_gate import (  # noqa: E402
 
 
 class ReleaseGateAuthenticationTests(unittest.TestCase):
+    @staticmethod
+    def _order(*, remark: str, strategy: str, symbol: str) -> OrderView:
+        return OrderView(
+            order_id=1,
+            symbol=symbol,
+            order_type=24,
+            order_volume=10,
+            traded_volume=10,
+            limit_price=1.5,
+            traded_price=1.5,
+            status=56,
+            status_msg="",
+            strategy_name=strategy,
+            remark=remark,
+        )
+
+    def test_certificate_accepts_bound_simulation_diagnostic_namespace(self):
+        morning_remark = "repo_morn_v2r_20260803_0001"
+        afternoon_remark = "repo_afternoon_v2_20260803_0001"
+        relevant, checks = _validation_order_evidence_checks(
+            broker_orders=[
+                self._order(
+                    remark=morning_remark,
+                    strategy="repo_morning_v2",
+                    symbol="204001.SH",
+                ),
+                self._order(
+                    remark=afternoon_remark,
+                    strategy="repo_afternoon_v2",
+                    symbol="131810.SZ",
+                ),
+            ],
+            morning_data={
+                "remark_prefix": "repo_morn_v2r_20260803_",
+                "current_order": {"remark": morning_remark},
+            },
+            afternoon_data={
+                "remark_prefix": "repo_afternoon_v2_20260803_",
+                "last_terminal_order": {"remark": afternoon_remark},
+            },
+        )
+        self.assertEqual(len(relevant), 2)
+        self.assertTrue(all(checks.values()))
+
+    def test_certificate_rejects_broker_identity_mismatch(self):
+        remark = "repo_morn_v2r_20260803_0001"
+        _, checks = _validation_order_evidence_checks(
+            broker_orders=[
+                self._order(
+                    remark=remark,
+                    strategy="truncated_or_foreign",
+                    symbol="204001.SH",
+                )
+            ],
+            morning_data={
+                "remark_prefix": "repo_morn_v2r_20260803_",
+                "current_order": {"remark": remark},
+            },
+            afternoon_data={
+                "remark_prefix": "repo_afternoon_v2_20260803_",
+                "last_terminal_order": {
+                    "remark": "repo_afternoon_v2_20260803_0001"
+                },
+            },
+        )
+        self.assertFalse(checks["validation_order_identity_ok"])
+        self.assertFalse(checks["morning_broker_evidence_ok"])
+
     def test_ratio_change_does_not_invalidate_capability_certificate(self):
         with TemporaryDirectory() as directory:
             config_path = Path(directory) / "runtime.json"

@@ -88,7 +88,9 @@ def markdown_headings(source: str) -> list[tuple[str, int]]:
             continue
         match = HEADING.match(stripped)
         if match is not None:
-            headings.append((match.group(2).strip(), len(match.group(1)) - 1))
+            rendered = inline_markup(match.group(2).strip())
+            plain = html.unescape(re.sub(r"<[^>]+>", "", rendered)).strip()
+            headings.append((plain, len(match.group(1)) - 1))
     return headings
 
 
@@ -261,11 +263,87 @@ def build_styles() -> dict[str, ParagraphStyle]:
     }
 
 
+def mermaid_state_diagram(
+    source: str,
+    styles: dict[str, ParagraphStyle],
+    width: float,
+) -> list[object]:
+    """Render the guide's Mermaid state sequence as a portable PDF diagram."""
+
+    required_markers = (
+        "flowchart TD",
+        "1 验证环境",
+        "5 提交固定价委托",
+        "10 确认无未决订单后结束",
+    )
+    if not all(marker in source for marker in required_markers):
+        return [Preformatted(source, styles["code"])]
+
+    node_style = ParagraphStyle(
+        "MermaidNodeCN",
+        parent=styles["table"],
+        fontName="RRBold",
+        fontSize=7.4,
+        leading=10,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#12384A"),
+    )
+    arrow_style = ParagraphStyle(
+        "MermaidArrowCN",
+        parent=styles["table"],
+        fontName="RRBold",
+        fontSize=13,
+        leading=14,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#28728D"),
+    )
+
+    def node(text: str) -> Paragraph:
+        return Paragraph(text, node_style)
+
+    def arrow(text: str) -> Paragraph:
+        return Paragraph(text, arrow_style)
+
+    blank = ""
+    data = [
+        [node("1 验证环境与账户"), arrow("→"), node("2 恢复柜台与journal"), arrow("→"), node("3 资金与新鲜行情")],
+        [blank, blank, blank, blank, arrow("↓")],
+        [node("6 持续查询委托"), arrow("←"), node("5 提交固定价委托"), arrow("←"), node("4 持久化唯一意图")],
+        [arrow("↓"), blank, blank, blank, blank],
+        [node("7 观察、复核或撤单"), arrow("→"), node("8 确认柜台终态"), arrow("→"), node("9 更新持久资金上限")],
+        [blank, blank, blank, blank, arrow("↓")],
+        [blank, blank, blank, blank, node("10 无未决订单后结束")],
+    ]
+    diagram = Table(
+        data,
+        colWidths=[width * 0.29, width * 0.065, width * 0.29, width * 0.065, width * 0.29],
+        hAlign="LEFT",
+    )
+    node_cells = ((0, 0), (2, 0), (4, 0), (0, 2), (2, 2), (4, 2), (0, 4), (2, 4), (4, 4), (4, 6))
+    commands: list[tuple[object, ...]] = [
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]
+    for cell in node_cells:
+        commands.extend(
+            [
+                ("BACKGROUND", cell, cell, colors.HexColor("#EAF3F6")),
+                ("BOX", cell, cell, 0.7, colors.HexColor("#28728D")),
+            ]
+        )
+    diagram.setStyle(TableStyle(commands))
+    return [diagram, Spacer(1, 4 * mm)]
+
+
 def markdown_story(source: str, styles: dict[str, ParagraphStyle], width: float) -> list[object]:
     lines = source.splitlines()
     story: list[object] = []
     paragraph: list[str] = []
     in_code = False
+    code_language = ""
     code_lines: list[str] = []
     index = 0
 
@@ -280,8 +358,16 @@ def markdown_story(source: str, styles: dict[str, ParagraphStyle], width: float)
         if stripped.startswith("```"):
             flush_paragraph()
             if in_code:
-                story.append(Preformatted("\n".join(code_lines), styles["code"]))
+                if code_language == "mermaid":
+                    story.extend(
+                        mermaid_state_diagram("\n".join(code_lines), styles, width)
+                    )
+                else:
+                    story.append(Preformatted("\n".join(code_lines), styles["code"]))
                 code_lines.clear()
+                code_language = ""
+            else:
+                code_language = stripped[3:].strip().lower()
             in_code = not in_code
             index += 1
             continue
@@ -346,7 +432,10 @@ def markdown_story(source: str, styles: dict[str, ParagraphStyle], width: float)
         index += 1
     flush_paragraph()
     if code_lines:
-        story.append(Preformatted("\n".join(code_lines), styles["code"]))
+        if code_language == "mermaid":
+            story.extend(mermaid_state_diagram("\n".join(code_lines), styles, width))
+        else:
+            story.append(Preformatted("\n".join(code_lines), styles["code"]))
     return story
 
 
@@ -356,6 +445,9 @@ def build_pdf(source_path: Path, output_path: Path, hash_path: Path) -> None:
     digest = source_sha256(source_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     styles = build_styles()
+    headings = markdown_headings(source)
+    document_title = headings[0][0] if headings else source_path.stem
+    source_label = source_path.as_posix()
     page_width, page_height = A4
     left = right = 21 * mm
     top = 19 * mm
@@ -366,7 +458,7 @@ def build_pdf(source_path: Path, output_path: Path, hash_path: Path) -> None:
         canvas.saveState()
         canvas.setFont("RRText", 7.5)
         canvas.setFillColor(colors.HexColor("#6A767B"))
-        canvas.drawString(left, 10 * mm, "miniQMT 国债逆回购自动执行")
+        canvas.drawString(left, 10 * mm, document_title)
         canvas.drawRightString(page_width - right, 10 * mm, f"第 {document.page} 页")
         canvas.setStrokeColor(colors.HexColor("#D8E0E3"))
         canvas.line(left, 13 * mm, page_width - right, 13 * mm)
@@ -379,18 +471,18 @@ def build_pdf(source_path: Path, output_path: Path, hash_path: Path) -> None:
         leftMargin=left,
         topMargin=top,
         bottomMargin=bottom,
-        title="miniQMT 国债逆回购自动执行",
+        title=document_title,
         author="reverse_repo",
-        subject=f"README.md SHA256: {digest}",
+        subject=f"{source_label} SHA256: {digest}",
         creator="reverse_repo/scripts/build_readme_pdf.py",
     )
     story: list[object] = [
         Spacer(1, 42 * mm),
-        Paragraph("miniQMT 国债逆回购自动执行", styles["cover_title"]),
-        Paragraph("README 完整版", styles["cover_meta"]),
+        Paragraph(inline_markup(document_title), styles["cover_title"]),
+        Paragraph("完整文档", styles["cover_meta"]),
         Spacer(1, 10 * mm),
         Paragraph(
-            f"源文件：reverse_repo/README.md<br/>生成时间：{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %z')}<br/>源文件SHA-256：{digest}",
+            f"源文件：{html.escape(source_label)}<br/>生成时间：{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %z')}<br/>源文件SHA-256：{digest}",
             styles["cover_meta"],
         ),
         PageBreak(),
@@ -446,14 +538,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build the complete reverse_repo README PDF.")
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--hash-output", type=Path, default=DEFAULT_HASH)
+    parser.add_argument(
+        "--hash-output",
+        type=Path,
+        default=None,
+        help="Source-hash sidecar; defaults to the output PDF path with .sha256 suffix.",
+    )
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
+    hash_output = args.hash_output or args.output.with_suffix(".sha256")
     if args.check:
-        check_pdf(args.source, args.output, args.hash_output)
+        check_pdf(args.source, args.output, hash_output)
     else:
-        build_pdf(args.source, args.output, args.hash_output)
-        check_pdf(args.source, args.output, args.hash_output)
+        build_pdf(args.source, args.output, hash_output)
+        check_pdf(args.source, args.output, hash_output)
         print(args.output.resolve())
     return 0
 

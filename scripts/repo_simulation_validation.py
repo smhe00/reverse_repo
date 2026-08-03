@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import random
+import re
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -194,12 +195,11 @@ def certify_simulation(
     afternoon_machine = dict(afternoon.get("machine") or {})
     morning_history = list(morning.get("history") or [])
 
-    relevant = [
-        order
-        for order in broker_orders
-        if order.remark.startswith("repo_morning_v2_")
-        or order.remark.startswith("repo_afternoon_v2_")
-    ]
+    relevant, evidence_checks = _validation_order_evidence_checks(
+        broker_orders=broker_orders,
+        morning_data=morning_data,
+        afternoon_data=afternoon_data,
+    )
     remarks = [order.remark for order in relevant]
     broker_terminal = all(
         order.classification
@@ -263,6 +263,7 @@ def certify_simulation(
         "all_validation_remarks_unique": (
             len(remarks) == len(set(remarks))
         ),
+        **evidence_checks,
     }
     return {
         "schema_version": 2,
@@ -289,6 +290,94 @@ def certify_simulation(
         "afternoon_state": afternoon_machine.get("state"),
         "validation_order_count": len(relevant),
     }
+
+
+def _validation_order_evidence_checks(
+    *,
+    broker_orders: list[Any],
+    morning_data: Mapping[str, object],
+    afternoon_data: Mapping[str, object],
+) -> tuple[list[Any], dict[str, bool]]:
+    """Bind signed journals to their exact broker-side namespaces/orders."""
+
+    prefixes = (
+        str(morning_data.get("remark_prefix", "")),
+        str(afternoon_data.get("remark_prefix", "")),
+    )
+    namespace_ok = all(
+        re.fullmatch(r"[a-z0-9_]{3,23}_[0-9]{8}_", prefix)
+        is not None
+        for prefix in prefixes
+    ) and prefixes[0] != prefixes[1]
+    relevant = (
+        [
+            order
+            for order in broker_orders
+            if any(order.remark.startswith(prefix) for prefix in prefixes)
+        ]
+        if namespace_ok
+        else []
+    )
+
+    morning_payload = morning_data.get("current_order")
+    afternoon_payload = afternoon_data.get("last_terminal_order")
+    morning_remark = (
+        str(morning_payload.get("remark", ""))
+        if isinstance(morning_payload, Mapping)
+        else ""
+    )
+    afternoon_remark = (
+        str(afternoon_payload.get("remark", ""))
+        if isinstance(afternoon_payload, Mapping)
+        else ""
+    )
+
+    def matches(
+        *,
+        remark: str,
+        prefix: str,
+        strategy: str,
+        symbols: set[str],
+    ) -> bool:
+        found = [order for order in relevant if order.remark == remark]
+        return (
+            bool(remark)
+            and remark.startswith(prefix)
+            and len(found) == 1
+            and found[0].strategy_name == strategy
+            and found[0].symbol in symbols
+            and found[0].principal_yuan > 0
+        )
+
+    identity_ok = namespace_ok and all(
+        (
+            order.strategy_name == "repo_morning_v2"
+            and order.symbol == GC001
+        )
+        if order.remark.startswith(prefixes[0])
+        else (
+            order.strategy_name == "repo_afternoon_v2"
+            and order.symbol in {GC001, R001}
+        )
+        for order in relevant
+    )
+    checks = {
+        "validation_namespaces_ok": namespace_ok,
+        "validation_order_identity_ok": identity_ok,
+        "morning_broker_evidence_ok": matches(
+            remark=morning_remark,
+            prefix=prefixes[0],
+            strategy="repo_morning_v2",
+            symbols={GC001},
+        ),
+        "afternoon_broker_evidence_ok": matches(
+            remark=afternoon_remark,
+            prefix=prefixes[1],
+            strategy="repo_afternoon_v2",
+            symbols={GC001, R001},
+        ),
+    }
+    return relevant, checks
 
 
 def _simulation_orders(

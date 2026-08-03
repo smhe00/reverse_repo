@@ -41,6 +41,7 @@ from repo_execution_core import (
     query_all_orders_strict,
     query_asset_strict,
     query_order_strict,
+    qmt_strategy_name,
     rank_book_plans,
     read_quote_books,
     reconcile_broker_fills,
@@ -86,7 +87,7 @@ MAXIMUM_REJECTED_SUBMISSIONS = 5
 MAXIMUM_ZERO_FILL_TERMINALS = 5
 MAXIMUM_TOTAL_ATTEMPTS = 50
 REMARK_PREFIX = "repo_afternoon_v2"
-STRATEGY_NAME = "gc001_r001_afternoon_state_machine_v2"
+STRATEGY_NAME = qmt_strategy_name("repo_afternoon_v2")
 
 
 def _parse_clock_time(value: object) -> clock_time:
