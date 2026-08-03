@@ -43,6 +43,13 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Windows PowerShell UTF-8 JSON verification failed."
 }
+& $windowsPowerShell `
+    -NoProfile `
+    -ExecutionPolicy Bypass `
+    -File (Join-Path $bundleRoot "tests\test_anonymous_update.ps1")
+if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+    throw "Anonymous no-Git update verification failed."
+}
 $portableRuntimeArguments = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",

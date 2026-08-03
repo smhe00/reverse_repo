@@ -15,6 +15,27 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("-Action Initialize", command)
         self.assertNotIn("pwsh", command.lower())
 
+    def test_rr_up_dispatches_the_protected_no_git_updater(self):
+        command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
+        updater = (
+            ROOT / "scripts" / "update_reverse_repo.ps1"
+        ).read_text(encoding="utf-8")
+        installer = (ROOT / "install.ps1").read_text(encoding="utf-8")
+        verifier = (ROOT / "verify.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn('if /I "%~1"=="up"', command)
+        self.assertIn('set "UPDATER=%~dp0scripts\\update_reverse_repo.ps1"', command)
+        self.assertIn('"%UPDATER%" -Destination "%~dp0."', command)
+        self.assertIn("Release package checksum mismatch", updater)
+        self.assertIn("Release package targets protected local state", updater)
+        self.assertIn("rr up is for no-Git installations", updater)
+        self.assertIn("restoring previous program files", updater)
+        self.assertIn("repo_live_enable_manifest.local.json", updater)
+        self.assertIn("release_files.local.json", updater)
+        self.assertIn("A reverse-repo task started during update", updater)
+        self.assertIn("release_files.local.json", installer)
+        self.assertIn("$releaseFiles", installer)
+        self.assertIn("test_anonymous_update.ps1", verifier)
+
     def test_initializer_bootstraps_verified_portable_python(self):
         initializer = (
             ROOT / "scripts" / "initialize_reverse_repo.ps1"

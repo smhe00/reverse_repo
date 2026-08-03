@@ -131,6 +131,28 @@ try {
     }
     Get-ChildItem -LiteralPath $stagingPath -Force |
         Copy-Item -Destination $destinationPath -Recurse
+    $releaseFiles = @(
+        Get-ChildItem -LiteralPath $stagingPath -Recurse -File |
+            ForEach-Object {
+                $_.FullName.Substring($stagingPath.Length + 1).Replace("\", "/")
+            } |
+            Sort-Object -Unique
+    )
+    $releaseManifestPath = Join-Path `
+        $destinationPath `
+        "config\release_files.local.json"
+    $releaseManifest = [ordered]@{
+        schema_version = 1
+        updated_at = [datetimeoffset]::Now.ToString("o")
+        package_sha256 = $actualHash
+        files = $releaseFiles
+    } | ConvertTo-Json -Depth 5
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText(
+        $releaseManifestPath,
+        $releaseManifest + "`n",
+        $utf8
+    )
     Write-Output "Package checksum verified: $actualHash"
     Write-Output "reverse_repo installed in: $destinationPath"
 }

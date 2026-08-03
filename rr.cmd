@@ -2,6 +2,7 @@
 setlocal EnableDelayedExpansion
 
 set "MANAGER=%~dp0scripts\manage_reverse_repo_tasks.ps1"
+set "UPDATER=%~dp0scripts\update_reverse_repo.ps1"
 set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "PSARGS=-NoProfile -ExecutionPolicy Bypass -File"
 
@@ -11,6 +12,10 @@ if "%~1"=="" (
 )
 if /I "%~1"=="init" (
     "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Initialize
+    exit /b !ERRORLEVEL!
+)
+if /I "%~1"=="up" (
+    "%POWERSHELL%" %PSARGS% "%UPDATER%" -Destination "%~dp0."
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="add" (
