@@ -14,7 +14,7 @@
       "unreachable_states": 0,
       "unreachable_transitions": 0
     },
-    "execution_source_sha256": "66d53e440a43bcdeac0d78b41ebceef35aec691c8cafc8cfb6f897dd36698c4b",
+    "execution_source_sha256": "35e3ace00a288a5495b44f901f6c8e9f3a17cf8b1218f4c05002899241dab3d5",
     "method": "exhaustive explicit-state reachability to fixed point",
     "morning": {
       "declared_phase_event_edges": 56,
@@ -40,5 +40,5 @@
     ],
     "transition_spec_sha256": "310445a483f5fad759e782c1640c70300d82d13d3c0c5a0619708be222dccbf0"
   },
-  "verified_at": "2026-08-04T21:02:25.137444+08:00"
+  "verified_at": "2026-08-05T07:20:03.734297+08:00"
 }

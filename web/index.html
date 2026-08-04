@@ -37,6 +37,9 @@
         <div class="task-status-grid" id="taskStatusCards" aria-live="polite">
           <div class="status-placeholder">正在提取任务状态…</div>
         </div>
+        <div class="certificate-status" id="certificateStatus" aria-live="polite">
+          正在提取认证依据…
+        </div>
       </section>
 
       <section class="panel config-panel">
@@ -95,6 +98,12 @@
           <button class="action-card neutral" data-action="cert_status">
             <strong>认证状态</strong><span>只读查看模拟认证任务</span>
           </button>
+          <button class="action-card live" data-action="live_cert">
+            <strong>快速实盘认证（固定1000元）</strong><span>真实GC001通道；必须输入 LIVE 1000</span>
+          </button>
+          <button class="action-card neutral" data-action="live_cert_status">
+            <strong>快速认证状态</strong><span>只读核验证书与证据，不连接QMT</span>
+          </button>
           <button class="action-card neutral" data-action="stress_status">
             <strong>压力测试状态</strong><span>只读查看一次性压力任务</span>
           </button>
@@ -128,6 +137,10 @@
       <p class="section-kicker">需要确认</p>
       <h2 id="confirmTitle">确认操作</h2>
       <p id="confirmText"></p>
+      <label class="confirm-phrase hidden" id="confirmPhraseGroup">
+        <span>请输入确认文字</span>
+        <input id="confirmPhrase" autocomplete="off" spellcheck="false">
+      </label>
       <div class="dialog-actions">
         <button class="button secondary" value="cancel">取消</button>
         <button class="button danger" id="confirmAccept" value="confirm">确认执行</button>

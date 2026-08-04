@@ -85,6 +85,23 @@ class ReverseRepoWebUiTests(unittest.TestCase):
         self.assertIs(kwargs["shell"], False)
         self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
 
+    def test_live_certification_requires_exact_phrase_and_fixed_backend_action(self):
+        preflight = self.application.run_action("live_cert_preflight")
+        self.assertTrue(preflight["ok"])
+        command, _ = self.runner.calls[-1]
+        self.assertEqual(command[-2:], ["-Action", "LiveCertPreflight"])
+        with self.assertRaises(PermissionError):
+            self.application.run_action("live_cert", "live 1000")
+        result = self.application.run_action("live_cert", "LIVE 1000")
+        self.assertTrue(result["ok"])
+        command, kwargs = self.runner.calls[-1]
+        self.assertEqual(
+            command[-4:],
+            ["-Action", "LiveCert", "-LiveCertConfirmation", "LIVE 1000"],
+        )
+        self.assertNotIn("--maximum-principal-yuan", command)
+        self.assertIs(kwargs["shell"], False)
+
     def test_status_output_is_reduced_to_structured_task_fields(self):
         output = """
 TaskName              : miniQMT Reverse Repo First
@@ -108,6 +125,12 @@ LastResult            : 尚未运行 (0x41303)
         self.assertEqual(tasks[1]["state"], "Disabled")
         self.assertEqual(tasks[1]["schedule_matches_config"], "True")
         self.assertNotIn("output", json.dumps(tasks))
+        certification = web_ui._parse_certification_status(
+            "Certification basis: live-channel certification; "
+            "does not include fault-injection recovery proof."
+        )
+        self.assertEqual(certification["valid"], "true")
+        self.assertEqual(certification["kind"], "live_channel")
 
     def test_shutdown_requires_idle_and_prevents_new_operations(self):
         with self.assertRaises(PermissionError):

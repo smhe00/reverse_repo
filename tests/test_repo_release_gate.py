@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -22,6 +23,7 @@ from verify_repo_release_gate import (  # noqa: E402
     _verify_evidence,
     _verify_signature,
     _verify_schedule_configuration,
+    main as release_gate_main,
 )
 
 
@@ -275,6 +277,57 @@ class ReleaseGateAuthenticationTests(unittest.TestCase):
                 "hash mismatch",
             ):
                 _verify_evidence(certificate, root)
+
+    def test_gate_prefers_full_simulation_and_falls_back_to_live_channel(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            live_certificate = root / "live.json"
+            live_certificate.write_text("{}", encoding="utf-8")
+            arguments = [
+                "verify_repo_release_gate.py",
+                "--qmt-path", str(root),
+                "--account-binding", str(root / "binding.json"),
+                "--simulation-certificate", str(root / "simulation.json"),
+                "--live-channel-certificate", str(live_certificate),
+                "--signing-key", str(root / "key.json"),
+                "--strategy-config", str(root / "runtime.json"),
+            ]
+            binding = type("Binding", (), {"qmt_path_fingerprint": "path"})()
+            verification = {
+                "transition_spec_sha256": "transition",
+                "execution_source_sha256": "source",
+            }
+            with mock.patch("sys.argv", arguments), mock.patch(
+                "verify_repo_release_gate.load_account_binding",
+                return_value=binding,
+            ), mock.patch(
+                "verify_repo_release_gate.verify_state_machines",
+                return_value=verification,
+            ), mock.patch(
+                "verify_repo_release_gate._verify_simulation_certificate"
+            ) as simulation, mock.patch(
+                "verify_repo_release_gate.verify_live_channel_certificate"
+            ) as live:
+                self.assertEqual(release_gate_main(), 0)
+                simulation.assert_called_once()
+                live.assert_not_called()
+
+            with mock.patch("sys.argv", arguments), mock.patch(
+                "verify_repo_release_gate.load_account_binding",
+                return_value=binding,
+            ), mock.patch(
+                "verify_repo_release_gate.verify_state_machines",
+                return_value=verification,
+            ), mock.patch(
+                "verify_repo_release_gate._verify_simulation_certificate",
+                side_effect=RuntimeError("stale"),
+            ), mock.patch(
+                "verify_repo_release_gate.verify_live_channel_certificate"
+            ) as live, mock.patch(
+                "verify_repo_release_gate.reverse_repo_strategy_config_sha256"
+            ):
+                self.assertEqual(release_gate_main(), 0)
+                live.assert_called_once()
 
 
 if __name__ == "__main__":

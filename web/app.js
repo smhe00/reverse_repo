@@ -3,6 +3,7 @@
 const elements = {
   connection: document.querySelector("#connectionBadge"),
   taskStatusCards: document.querySelector("#taskStatusCards"),
+  certificateStatus: document.querySelector("#certificateStatus"),
   operationOutput: document.querySelector("#operationOutput"),
   progress: document.querySelector("#progressBar"),
   refresh: document.querySelector("#refreshButton"),
@@ -18,6 +19,8 @@ const elements = {
   dialogTitle: document.querySelector("#confirmTitle"),
   dialogText: document.querySelector("#confirmText"),
   dialogAccept: document.querySelector("#confirmAccept"),
+  dialogPhraseGroup: document.querySelector("#confirmPhraseGroup"),
+  dialogPhrase: document.querySelector("#confirmPhrase"),
 };
 
 let token = "";
@@ -151,6 +154,17 @@ function renderTaskStatus(tasks, statusOk) {
   });
 }
 
+function renderCertification(status) {
+  const valid = String(status?.valid || "false") === "true";
+  elements.certificateStatus.className = `certificate-status ${valid ? "valid" : "invalid"}`;
+  elements.certificateStatus.replaceChildren();
+  const title = document.createElement("strong");
+  title.textContent = status?.summary || "认证依据未知";
+  const scope = document.createElement("span");
+  scope.textContent = status?.scope || "请运行认证状态检查。";
+  elements.certificateStatus.append(title, scope);
+}
+
 async function refresh() {
   if (!token) {
     setConnection("error", "会话令牌缺失");
@@ -161,6 +175,7 @@ async function refresh() {
     const payload = await api("/api/bootstrap");
     fillConfiguration(payload.configuration);
     renderTaskStatus(payload.status.tasks, payload.status.ok);
+    renderCertification(payload.status.certification);
     setConnection(payload.status.ok ? "online" : "error", payload.status.ok ? "本机服务已连接" : "状态读取失败");
   } catch (error) {
     setConnection("error", "连接失败");
@@ -169,12 +184,23 @@ async function refresh() {
   }
 }
 
-function confirmAction(title, text) {
+function confirmAction(title, text, requiredPhrase = null) {
   elements.dialogTitle.textContent = title;
   elements.dialogText.textContent = text;
+  elements.dialogPhrase.value = "";
+  elements.dialogPhraseGroup.classList.toggle("hidden", !requiredPhrase);
+  if (requiredPhrase) {
+    elements.dialogPhrase.placeholder = requiredPhrase;
+  }
   elements.dialog.showModal();
   return new Promise((resolve) => {
-    elements.dialog.addEventListener("close", () => resolve(elements.dialog.returnValue === "confirm"), { once: true });
+    elements.dialog.addEventListener("close", () => {
+      if (elements.dialog.returnValue !== "confirm") {
+        resolve(false);
+        return;
+      }
+      resolve(requiredPhrase ? elements.dialogPhrase.value : true);
+    }, { once: true });
   });
 }
 
@@ -183,6 +209,8 @@ const actionDetails = {
   off: { title: "关闭实盘任务", text: "两个实盘任务将被禁用，启用快照会撤销。之后不会自动恢复。", confirmation: "DISABLE LIVE" },
   on: { title: "启用实盘任务", text: "系统将重新核验证书、账户绑定、执行源码和四项参数；通过后，资金比例大于0的任务将进入Ready。", confirmation: "ENABLE LIVE" },
   cert_status: { title: "读取认证状态", text: "只读查看模拟认证任务，不创建或删除任务。", confirmation: null },
+  live_cert: { title: "快速实盘认证（固定1000元）", text: "这会提交真实GC001逆回购，累计成交本金硬上限1000元。请先确认实盘任务已关闭；成功后仍不会自动启用。", confirmation: "LIVE 1000", typed: true },
+  live_cert_status: { title: "读取快速认证状态", text: "只读核验证书、journal与当前环境，不连接miniQMT、不下单。", confirmation: null },
   stress_status: { title: "读取压力状态", text: "只读查看压力测试任务，不创建或删除任务。", confirmation: null },
   mail_test: { title: "发送测试邮件", text: "将使用本机已保存的加密SMTP配置发送一封测试邮件。", confirmation: null },
 };
@@ -191,13 +219,38 @@ async function runAction(action) {
   if (busy) return;
   const detail = actionDetails[action];
   if (!detail) return;
-  if (!(await confirmAction(detail.title, detail.text))) return;
+  if (action === "live_cert") {
+    setBusy(true, "正在执行实盘只读预检；不会下单…");
+    try {
+      const preflight = await api("/api/action", {
+        method: "POST",
+        body: JSON.stringify({ action: "live_cert_preflight", confirmation: null }),
+      });
+      if (!preflight.ok) throw new Error(preflight.output || "只读预检失败");
+      elements.operationOutput.textContent = preflight.output;
+    } catch (error) {
+      elements.operationOutput.textContent = `只读预检失败；没有下单\n${String(error.message || error)}`;
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+  }
+  const accepted = await confirmAction(
+    detail.title,
+    detail.text,
+    detail.typed ? detail.confirmation : null,
+  );
+  if (!accepted) return;
   setBusy(true, `${detail.title}…`);
   try {
     const payload = await api("/api/action", {
       method: "POST",
-      body: JSON.stringify({ action, confirmation: detail.confirmation }),
+      body: JSON.stringify({
+        action,
+        confirmation: detail.typed ? accepted : detail.confirmation,
+      }),
     });
+    if (!payload.ok) throw new Error(payload.output || "命令执行失败");
     elements.operationOutput.textContent = payload.output || "操作完成，没有额外输出。";
     await refresh();
   } catch (error) {

@@ -189,6 +189,14 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("-Action CertStatus", command)
         self.assertIn("-Action CertDisable", command)
         self.assertIn("-Action CertRemove", command)
+        self.assertIn("-Action LiveCert", command)
+        self.assertIn("-Action LiveCertStatus", command)
+        self.assertIn("-Action LiveCertReset", command)
+        manager = (
+            ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"LiveCertPreflight"', manager)
+        self.assertIn("Invoke-LiveChannelCertificationPreflight", manager)
 
     def test_rr_cfg_is_transactional_and_requires_live_tasks_off(self):
         command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
@@ -283,7 +291,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"
         ).read_text(encoding="utf-8")
         live = manager.index("【实盘任务：关键命令】")
-        certification = manager.index("【模拟能力认证：实盘前必须完成】")
+        certification = manager.index("【完整模拟能力认证：可选的高强度认证】")
         stress = manager.index("【一次性模拟压力测试：不替代能力认证】")
         mail = manager.index("【邮件与帮助】")
         self.assertLess(live, certification)
@@ -384,10 +392,12 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         ]
         manual = quick.index("第3步：交互检查并修改策略参数（必做）")
         validation = quick.index("第4步：应用配置并完成本地验证")
-        certification = quick.index("第5步：用模拟账户完成一个交易日认证")
+        certification = quick.index("第5步：选择一种认证方式")
         self.assertLess(manual, validation)
         self.assertLess(validation, certification)
         self.assertIn(".\\rr cfg", quick)
+        self.assertIn(".\\rr cert live", quick)
+        self.assertIn("LIVE 1000", quick)
         self.assertIn("自动运行", quick)
         self.assertIn("要求输入`Y`保存", quick)
         self.assertIn("输入`N`或`Q`取消", quick)

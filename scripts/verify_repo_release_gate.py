@@ -13,6 +13,7 @@ from repo_execution_core import (
     xtquant_runtime_sha256,
 )
 from repo_execution_state_machine import verify_state_machines
+from repo_live_channel_validation import verify_live_channel_certificate
 
 
 def main() -> int:
@@ -24,7 +25,8 @@ def main() -> int:
     )
     parser.add_argument("--qmt-path", required=True)
     parser.add_argument("--account-binding", required=True)
-    parser.add_argument("--simulation-certificate", required=True)
+    parser.add_argument("--simulation-certificate", default="")
+    parser.add_argument("--live-channel-certificate", default="")
     parser.add_argument("--signing-key", required=True)
     parser.add_argument("--strategy-config", required=True)
     args = parser.parse_args()
@@ -41,7 +43,67 @@ def main() -> int:
     )
     if binding.qmt_path_fingerprint is None:
         raise RuntimeError("live binding does not bind the QMT path")
-    certificate_path = Path(args.simulation_certificate)
+    errors: list[str] = []
+    if args.simulation_certificate:
+        try:
+            _verify_simulation_certificate(
+                certificate_path=Path(args.simulation_certificate),
+                signing_key=Path(args.signing_key),
+                strategy_config=Path(args.strategy_config),
+                expected_hash=expected_hash,
+                expected_source_hash=expected_source_hash,
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"full simulation certificate invalid: {exc}")
+        else:
+            print(
+                "Live enable gate passed using full simulation "
+                f"certification for state-machine specification {expected_hash}"
+            )
+            print(
+                "Certification basis: full simulation certification "
+                "(normal, recovery, and afternoon paths)."
+            )
+            return 0
+    if args.live_channel_certificate:
+        try:
+            verify_live_channel_certificate(
+                certificate=json.loads(
+                    Path(args.live_channel_certificate).read_text(encoding="utf-8")
+                ),
+                certificate_path=Path(args.live_channel_certificate),
+                signing_key=Path(args.signing_key),
+                qmt_path=Path(args.qmt_path),
+                account_binding=Path(args.account_binding),
+                expected_transition_hash=expected_hash,
+                expected_source_hash=expected_source_hash,
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"live-channel certificate invalid: {exc}")
+        else:
+            reverse_repo_strategy_config_sha256(Path(args.strategy_config))
+            print(
+                "Live enable gate passed using CNY 1,000 live-channel "
+                f"certification for state-machine specification {expected_hash}"
+            )
+            print(
+                "Certification basis: live-channel certification; "
+                "does not include fault-injection recovery proof."
+            )
+            return 0
+    if not errors:
+        errors.append("no certification certificate was provided")
+    raise RuntimeError("live enable gate failed: " + " | ".join(errors))
+
+
+def _verify_simulation_certificate(
+    *,
+    certificate_path: Path,
+    signing_key: Path,
+    strategy_config: Path,
+    expected_hash: str,
+    expected_source_hash: str,
+) -> None:
     try:
         certificate = json.loads(
             certificate_path.read_text(encoding="utf-8")
@@ -54,7 +116,7 @@ def main() -> int:
         raise RuntimeError(
             "unsupported simulation verification certificate"
         )
-    _verify_signature(certificate, Path(args.signing_key))
+    _verify_signature(certificate, signing_key)
     _verify_evidence(certificate, certificate_path.parent)
     if certificate.get("passed") is not True:
         raise RuntimeError("simulation verification did not pass")
@@ -77,7 +139,7 @@ def main() -> int:
         )
     _verify_schedule_configuration(
         certificate,
-        Path(args.strategy_config),
+        strategy_config,
     )
     _verify_certificate_timestamp(certificate)
     required_checks = {
@@ -113,11 +175,6 @@ def main() -> int:
         raise RuntimeError(
             "simulation gate checks are incomplete: " + ", ".join(failed)
         )
-    print(
-        "Live enable gate passed for state-machine specification "
-        f"{expected_hash}"
-    )
-    return 0
 
 
 def _verify_certificate_timestamp(
@@ -219,4 +276,8 @@ def _verify_evidence(
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as exc:  # noqa: BLE001
+        print(f"{type(exc).__name__}: {exc}")
+        raise SystemExit(1) from None

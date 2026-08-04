@@ -15,6 +15,7 @@ EXECUTION_SOURCE_FILES = (
     "repo_failure_alert.py",
     "repo_live_enable_manifest.py",
     "repo_simulation_validation.py",
+    "repo_live_channel_validation.py",
     "verify_repo_release_gate.py",
     "gc001_live_daily_90pct_093042.py",
     "gc001_r001_live_afternoon_sweep.py",
@@ -26,6 +27,7 @@ EXECUTION_SOURCE_FILES = (
     "run_repo_simulation_morning_recovery_validation.ps1",
     "run_repo_simulation_afternoon_validation.ps1",
     "run_repo_simulation_certificate.ps1",
+    "run_repo_live_channel_validation.ps1",
     "install_repo_simulation_validation_tasks.ps1",
     "manage_reverse_repo_tasks.ps1",
 )

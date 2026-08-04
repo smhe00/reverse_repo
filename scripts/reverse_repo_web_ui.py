@@ -46,6 +46,19 @@ ACTION_SPECS: dict[str, ActionSpec] = {
         timeout_seconds=300,
     ),
     "cert_status": ActionSpec(manager_action="CertStatus", timeout_seconds=30),
+    "live_cert": ActionSpec(
+        manager_action="LiveCert",
+        confirmation="LIVE 1000",
+        timeout_seconds=420,
+    ),
+    "live_cert_preflight": ActionSpec(
+        manager_action="LiveCertPreflight",
+        timeout_seconds=360,
+    ),
+    "live_cert_status": ActionSpec(
+        manager_action="LiveCertStatus",
+        timeout_seconds=30,
+    ),
     "stress_status": ActionSpec(
         manager_action="StressStatus",
         timeout_seconds=30,
@@ -107,6 +120,39 @@ def _parse_live_task_status(output: str) -> list[dict[str, str]]:
     if current is not None:
         tasks.append(current)
     return tasks
+
+
+def _parse_certification_status(output: str) -> dict[str, str]:
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line.startswith("Certification basis: full simulation"):
+            return {
+                "kind": "full_simulation",
+                "valid": "true",
+                "summary": "完整模拟认证：有效（优先使用）",
+                "scope": "包含正常路径、恢复路径和下午编排",
+            }
+        if line.startswith("Certification basis: live-channel"):
+            return {
+                "kind": "live_channel",
+                "valid": "true",
+                "summary": "实盘通道认证：有效",
+                "scope": "固定1000元真实通道；不含故障注入恢复证明",
+            }
+        if line.startswith("实盘通道认证："):
+            valid = "有效" in line and "无效" not in line
+            return {
+                "kind": "live_channel",
+                "valid": str(valid).lower(),
+                "summary": line,
+                "scope": "固定1000元真实通道；不含故障注入恢复证明",
+            }
+    return {
+        "kind": "live_channel",
+        "valid": "false",
+        "summary": "实盘通道认证：不存在。",
+        "scope": "固定1000元真实通道；不含故障注入恢复证明",
+    }
 
 
 class LocalUiApplication:
@@ -173,15 +219,19 @@ class LocalUiApplication:
             if spec.verify:
                 command = self._powershell_file(self.verifier)
             else:
-                command = self._powershell_file(
-                    self.manager,
-                    "-Action",
-                    str(spec.manager_action),
-                )
+                arguments = ["-Action", str(spec.manager_action)]
+                if action == "live_cert":
+                    arguments.extend(
+                        ["-LiveCertConfirmation", "LIVE 1000"]
+                    )
+                command = self._powershell_file(self.manager, *arguments)
             result = self._run(command, timeout_seconds=spec.timeout_seconds)
             payload = self._result_payload(result)
             if action == "status":
                 payload["tasks"] = _parse_live_task_status(
+                    str(payload["output"])
+                )
+                payload["certification"] = _parse_certification_status(
                     str(payload["output"])
                 )
             return payload

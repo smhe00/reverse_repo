@@ -63,6 +63,11 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 .status-detail strong { margin-top: 3px; font-size: 12px; line-height: 1.45; word-break: break-word; }
 .status-detail:first-child { grid-column: 1 / -1; }
 .status-placeholder { padding: 44px 18px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); text-align: center; }
+.certificate-status { display: grid; gap: 5px; margin-top: 12px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 13px; background: #fafbf8; }
+.certificate-status strong { font-size: 13px; }
+.certificate-status span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.certificate-status.valid { border-left: 4px solid var(--teal); }
+.certificate-status.invalid { border-left: 4px solid var(--amber); }
 .error-text { color: var(--red); }
 .terminal { margin: 0; min-height: 246px; max-height: 310px; overflow: auto; padding: 16px; border-radius: 14px; background: #152025; color: #d9e6e0; font: 12px/1.65 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-word; }
 .terminal.large { min-height: 286px; max-height: 430px; }
@@ -96,6 +101,7 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 22px
 dialog { width: min(480px, calc(100% - 36px)); border: 0; border-radius: 18px; padding: 24px; color: var(--ink); box-shadow: 0 28px 90px rgba(12, 29, 30, 0.28); }
 dialog::backdrop { background: rgba(14, 26, 27, 0.55); backdrop-filter: blur(3px); }
 dialog p:not(.section-kicker) { color: var(--muted); line-height: 1.7; }
+.confirm-phrase { display: block; margin-top: 16px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .closed-screen { width: min(620px, calc(100% - 36px)); margin: 24vh auto 0; padding: 38px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); box-shadow: var(--shadow); text-align: center; }
 .closed-screen h1 { font-size: 34px; }

@@ -15,6 +15,10 @@ param(
         "CertDisable",
         "CertRemove",
         "CertStatus",
+        "LiveCert",
+        "LiveCertPreflight",
+        "LiveCertStatus",
+        "LiveCertReset",
         "Stress",
         "StressDisable",
         "StressRemove",
@@ -24,7 +28,8 @@ param(
     )]
     [string]$Action,
     [string]$CertDate = "",
-    [string]$StressDate = ""
+    [string]$StressDate = "",
+    [string]$LiveCertConfirmation = ""
 )
 
 Set-StrictMode -Version Latest
@@ -588,9 +593,12 @@ function Assert-LiveEnableGate {
     $bindingPath = Join-Path `
         $repoRoot `
         "config\repo_live_account_binding.local.json"
-    $certificatePath = Join-Path `
+    $simulationCertificatePath = Join-Path `
         $repoRoot `
         "reports\gc001_intraday\simulation_validation\latest.json"
+    $liveChannelCertificatePath = Join-Path `
+        $repoRoot `
+        "reports\gc001_intraday\live_channel_validation\latest.json"
     $signingKeyPath = Join-Path `
         $repoRoot `
         "config\repo_release_gate_secret.local.json"
@@ -601,7 +609,6 @@ function Assert-LiveEnableGate {
         $pythonPath,
         $gateScript,
         $bindingPath,
-        $certificatePath,
         $signingKeyPath,
         $strategyConfigPath
     )) {
@@ -609,21 +616,117 @@ function Assert-LiveEnableGate {
             throw "Live enable gate file is missing: $requiredPath"
         }
     }
-    & $pythonPath `
-        $gateScript `
-        "--qmt-path" `
-        $qmtPath `
-        "--account-binding" `
-        $bindingPath `
-        "--simulation-certificate" `
-        $certificatePath `
-        "--signing-key" `
-        $signingKeyPath `
-        "--strategy-config" `
-        $strategyConfigPath
+    $gateArguments = @(
+        $gateScript,
+        "--qmt-path", $qmtPath,
+        "--account-binding", $bindingPath,
+        "--signing-key", $signingKeyPath,
+        "--strategy-config", $strategyConfigPath
+    )
+    if (Test-Path -LiteralPath $simulationCertificatePath -PathType Leaf) {
+        $gateArguments += @(
+            "--simulation-certificate", $simulationCertificatePath
+        )
+    }
+    if (Test-Path -LiteralPath $liveChannelCertificatePath -PathType Leaf) {
+        $gateArguments += @(
+            "--live-channel-certificate", $liveChannelCertificatePath
+        )
+    }
+    & $pythonPath @gateArguments
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
         throw "Live enable gate failed."
     }
+}
+
+function Invoke-LiveChannelCertification {
+    $scriptPath = Join-Path $PSScriptRoot "run_repo_live_channel_validation.ps1"
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "快速实盘认证脚本不存在：$scriptPath"
+    }
+    if ([string]::IsNullOrWhiteSpace($LiveCertConfirmation)) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath
+    }
+    else {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
+            -Confirmation $LiveCertConfirmation
+    }
+    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+        throw "快速实盘认证失败。"
+    }
+}
+
+function Invoke-LiveChannelCertificationPreflight {
+    $scriptPath = Join-Path $PSScriptRoot "run_repo_live_channel_validation.ps1"
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "Live-channel certification script is missing: $scriptPath"
+    }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
+        -PreflightOnly
+    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+        throw "Live-channel read-only preflight failed."
+    }
+}
+
+function Get-LiveChannelCertificationStatus {
+    $pythonPath = Get-ReverseRepoPython
+    $validatorPath = Join-Path $PSScriptRoot "repo_live_channel_validation.py"
+    $certificatePath = Join-Path $repoRoot "reports\gc001_intraday\live_channel_validation\latest.json"
+    if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf)) {
+        Write-Output "实盘通道认证：不存在。"
+        return
+    }
+    & $pythonPath $validatorPath status `
+        --qmt-path (Get-ReverseRepoQmtPath -Environment "live") `
+        --account-binding (Join-Path $repoRoot "config\repo_live_account_binding.local.json") `
+        --certificate $certificatePath `
+        --signing-key (Join-Path $repoRoot "config\repo_release_gate_secret.local.json")
+}
+
+function Reset-LiveChannelCertificate {
+    foreach ($name in $managedTaskNames) {
+        $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+        if ($null -ne $task -and [string]$task.State -ne "Disabled") {
+            throw "请先执行 .\rr off；实盘任务仍未禁用：$name"
+        }
+    }
+    $mutexPath = Join-Path $repoRoot "reports\gc001_intraday\reverse_repo_execution.lock"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $mutexPath) |
+        Out-Null
+    try {
+        $mutexProbe = [System.IO.File]::Open(
+            $mutexPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        $mutexProbe.Dispose()
+    }
+    catch {
+        throw "Global reverse-repo mutex is busy; reset is refused."
+    }
+    $directory = Join-Path $repoRoot "reports\gc001_intraday\live_channel_validation"
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+        Remove-ReverseRepoLiveEnableManifest
+        Write-Output "快速实盘认证证据不存在；实盘启用快照已撤销。"
+        return
+    }
+    $items = Get-ChildItem -LiteralPath $directory -File -ErrorAction SilentlyContinue
+    if ($items.Count -eq 0) {
+        Remove-ReverseRepoLiveEnableManifest
+        Write-Output "快速实盘认证证据不存在；实盘启用快照已撤销。"
+        return
+    }
+    $archive = Join-Path $directory ("revoked\" + (Get-Date -Format "yyyyMMdd_HHmmss"))
+    if (-not $PSCmdlet.ShouldProcess($directory, "Archive and revoke live-channel certification")) {
+        return
+    }
+    Remove-ReverseRepoLiveEnableManifest
+    New-Item -ItemType Directory -Force -Path $archive | Out-Null
+    foreach ($item in $items) {
+        Move-Item -LiteralPath $item.FullName -Destination $archive
+    }
+    Write-Output "快速实盘证书及证据已撤销并归档：$archive"
 }
 
 function Configure-FailureEmail {
@@ -1026,7 +1129,7 @@ rr - miniQMT 逆回购自动任务管理工具
     第二次：$secondStartText 启动，$secondExecutionText 扫描GC001/R-001，
             使用 $secondCashUsagePercent 的首次有效资金快照。
 
-【模拟能力认证：实盘前必须完成】
+【完整模拟能力认证：可选的高强度认证】
   .\rr cert [YYYY-MM-DD]
       部署单日四项模拟认证任务。正式上午/下午执行器验证完整正常路径；
       当天另一隔离交易窗口用独立journal、锁和委托命名空间验证崩溃恢复。
@@ -1038,6 +1141,17 @@ rr - miniQMT 逆回购自动任务管理工具
 
   .\rr reset
       撤销并归档当前模拟能力证书。之后必须重新执行 rr cert，才能启用实盘。
+
+【快速实盘通道认证：固定1000元】
+  .\rr cert live
+      前台执行一次GC001真实逆回购，累计成交本金硬上限1000元。必须先rr off，
+      并人工输入LIVE 1000；成功后任务仍保持Disabled，不会自动rr on。
+
+  .\rr cert live stat
+      只读核验证书、journal和本机环境；不连接QMT、不下单。
+
+  .\rr cert live reset
+      归档并撤销快速实盘证书及其证据，同时撤销实盘启用快照。
 
 【一次性模拟压力测试：不替代能力认证】
   .\rr stress [YYYY-MM-DD]
@@ -1092,6 +1206,14 @@ switch ($Action) {
     }
     "Status" {
         Get-ManagedTaskStatus
+        Write-Output ""
+        try {
+            Assert-LiveEnableGate
+        }
+        catch {
+            Write-Output "认证依据：当前没有可用于rr on的有效证书。"
+            Write-Output "原因：$($_.Exception.Message)"
+        }
     }
     "Enable" {
         Set-ManagedTasksEnabled -Enabled $true
@@ -1124,6 +1246,18 @@ switch ($Action) {
     }
     "CertStatus" {
         Get-SimulationCertificationTaskStatus
+    }
+    "LiveCert" {
+        Invoke-LiveChannelCertification
+    }
+    "LiveCertPreflight" {
+        Invoke-LiveChannelCertificationPreflight
+    }
+    "LiveCertStatus" {
+        Get-LiveChannelCertificationStatus
+    }
+    "LiveCertReset" {
+        Reset-LiveChannelCertificate
     }
     "Stress" {
         Install-SimulationStressTask

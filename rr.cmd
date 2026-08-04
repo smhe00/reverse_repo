@@ -69,7 +69,18 @@ if /I "%~1"=="reset" (
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="cert" (
-    if /I "%~2"=="off" (
+    if /I "%~2"=="live" (
+        if /I "%~3"=="stat" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCertStatus
+        ) else if /I "%~3"=="reset" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCertReset
+        ) else if "%~3"=="" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCert
+        ) else (
+            echo Unknown live certification argument: %~3
+            exit /b 2
+        )
+    ) else if /I "%~2"=="off" (
         "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action CertDisable
     ) else if /I "%~2"=="del" (
         "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action CertRemove

@@ -276,6 +276,14 @@ def main() -> int:
         default=0,
         help="Simulation/canary cap; zero means no additional cap.",
     )
+    parser.add_argument(
+        "--live-channel-certification",
+        action="store_true",
+        help=(
+            "Run the production lifecycle as the fixed CNY 1,000 live "
+            "channel certification canary."
+        ),
+    )
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
 
@@ -336,7 +344,22 @@ def _run_morning_command(
     qmt_path = Path(args.qmt_path).resolve()
     if not qmt_path.is_dir():
         raise ValueError(f"QMT userdata path does not exist: {qmt_path}")
-    if args.environment != "simulation" and args.remark_root != REMARK_PREFIX:
+    if args.live_channel_certification:
+        if args.environment != "live":
+            raise ValueError("live channel certification requires live")
+        if args.remark_root != "repo_live_cert":
+            raise ValueError(
+                "live channel certification requires repo_live_cert remarks"
+            )
+        if int(args.maximum_principal_yuan) != 1000:
+            raise ValueError(
+                "live channel certification is hard-capped at CNY 1,000"
+            )
+        if float(args.cash_usage_ratio) != 1.0:
+            raise ValueError(
+                "live channel certification requires cash usage ratio 1"
+            )
+    elif args.environment != "simulation" and args.remark_root != REMARK_PREFIX:
         raise ValueError("custom remark root is restricted to simulation")
     maximum_principal = int(args.maximum_principal_yuan)
     if maximum_principal < 0:
@@ -417,6 +440,13 @@ def run_morning(
             "quote_deadline": quote_deadline.isoformat(),
             "cash_usage_ratio": cash_usage_ratio,
             "remark_prefix": remark_prefix,
+            "maximum_principal_yuan": maximum_principal_yuan,
+            "live_channel_certification": (
+                environment == "live"
+                and remark_prefix.startswith("repo_live_cert_")
+                and maximum_principal_yuan == 1000
+                and cash_usage_ratio == 1.0
+            ),
             "maximum_order_attempts": MAXIMUM_ORDER_ATTEMPTS,
             "order_reprice_check_seconds": (
                 ORDER_REPRICE_CHECK_SECONDS
