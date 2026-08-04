@@ -230,6 +230,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         server = (
             ROOT / "scripts" / "reverse_repo_web_ui.py"
         ).read_text(encoding="utf-8")
+        frontend = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
         configurator = (
             ROOT / "scripts" / "configure_reverse_repo_strategy.ps1"
         ).read_text(encoding="ascii")
@@ -243,6 +244,11 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("Invalid request origin", server)
         self.assertIn("shell=False", server)
         self.assertIn("-NonInteractiveConfirmed", server)
+        self.assertIn("prepare_shutdown", server)
+        self.assertIn('route == "/api/shutdown"', server)
+        self.assertIn("A background operation is still running", server)
+        self.assertIn('window.location.replace("about:blank")', frontend)
+        self.assertIn("renderTaskStatus", frontend)
         self.assertIn("[switch]$NonInteractiveConfirmed", configurator)
         for name in ("index.html", "app.js", "style.css"):
             self.assertTrue((ROOT / "web" / name).is_file())

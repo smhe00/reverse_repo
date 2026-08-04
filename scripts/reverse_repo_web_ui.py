@@ -53,6 +53,20 @@ ACTION_SPECS: dict[str, ActionSpec] = {
     "mail_test": ActionSpec(manager_action="TestMail", timeout_seconds=60),
 }
 
+STATUS_FIELD_NAMES = {
+    "TaskName": "task_name",
+    "Installed": "installed",
+    "State": "state",
+    "StrategyParameters": "strategy_parameters",
+    "EnabledByConfig": "enabled_by_config",
+    "Schedule": "schedule",
+    "ScheduleMatchesConfig": "schedule_matches_config",
+    "LiveEnableSnapshot": "live_enable_snapshot",
+    "NextRunTime": "next_run_time",
+    "LastRunTime": "last_run_time",
+    "LastResult": "last_result",
+}
+
 
 def _decode_process_output(value: bytes) -> str:
     if not value:
@@ -74,6 +88,27 @@ def _windows_powershell() -> Path:
     return path
 
 
+def _parse_live_task_status(output: str) -> list[dict[str, str]]:
+    tasks: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for raw_line in output.splitlines():
+        if ":" not in raw_line:
+            continue
+        raw_key, raw_value = raw_line.split(":", 1)
+        field = STATUS_FIELD_NAMES.get(raw_key.strip())
+        if field is None:
+            continue
+        if field == "task_name":
+            if current is not None:
+                tasks.append(current)
+            current = {field: raw_value.strip()}
+        elif current is not None:
+            current[field] = raw_value.strip()
+    if current is not None:
+        tasks.append(current)
+    return tasks
+
+
 class LocalUiApplication:
     def __init__(
         self,
@@ -92,6 +127,7 @@ class LocalUiApplication:
         self.powershell = _windows_powershell()
         self._process_runner = process_runner
         self._operation_lock = threading.Lock()
+        self._closing = False
         for required in (
             self.runtime_config,
             self.default_config,
@@ -132,6 +168,8 @@ class LocalUiApplication:
         if not self._operation_lock.acquire(blocking=False):
             raise RuntimeError("Another local UI operation is still running")
         try:
+            if self._closing:
+                raise RuntimeError("The local UI is shutting down")
             if spec.verify:
                 command = self._powershell_file(self.verifier)
             else:
@@ -141,7 +179,12 @@ class LocalUiApplication:
                     str(spec.manager_action),
                 )
             result = self._run(command, timeout_seconds=spec.timeout_seconds)
-            return self._result_payload(result)
+            payload = self._result_payload(result)
+            if action == "status":
+                payload["tasks"] = _parse_live_task_status(
+                    str(payload["output"])
+                )
+            return payload
         finally:
             self._operation_lock.release()
 
@@ -170,6 +213,8 @@ class LocalUiApplication:
         if not self._operation_lock.acquire(blocking=False):
             raise RuntimeError("Another local UI operation is still running")
         try:
+            if self._closing:
+                raise RuntimeError("The local UI is shutting down")
             command = self._powershell_file(
                 self.configurator,
                 "-FirstExecutionTime",
@@ -186,6 +231,20 @@ class LocalUiApplication:
             payload = self._result_payload(result)
             payload["configuration"] = self.configuration_model()
             return payload
+        finally:
+            self._operation_lock.release()
+
+    def prepare_shutdown(self, confirmation: object) -> None:
+        if not hmac.compare_digest(str(confirmation or ""), "CLOSE UI"):
+            raise PermissionError("Shutdown confirmation did not match")
+        if not self._operation_lock.acquire(blocking=False):
+            raise RuntimeError(
+                "A background operation is still running; wait for Idle before closing"
+            )
+        try:
+            if self._closing:
+                raise RuntimeError("The local UI is already shutting down")
+            self._closing = True
         finally:
             self._operation_lock.release()
 
@@ -325,10 +384,22 @@ def make_handler(
                         values,
                         payload.get("confirmation"),
                     )
+                elif route == "/api/shutdown":
+                    application.prepare_shutdown(payload.get("confirmation"))
+                    result = {
+                        "ok": True,
+                        "output": "后台操作均为Idle；本机控制台正在关闭。",
+                    }
                 else:
                     self._json_error(HTTPStatus.NOT_FOUND, "Not found")
                     return
                 self._json_response(HTTPStatus.OK, result)
+                if route == "/api/shutdown":
+                    threading.Thread(
+                        target=self.server.shutdown,
+                        name="reverse-repo-ui-shutdown",
+                        daemon=True,
+                    ).start()
             except PermissionError as exc:
                 self._json_error(HTTPStatus.FORBIDDEN, str(exc))
             except ValueError as exc:

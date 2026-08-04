@@ -2,15 +2,14 @@
 
 const elements = {
   connection: document.querySelector("#connectionBadge"),
-  statusOutput: document.querySelector("#statusOutput"),
+  taskStatusCards: document.querySelector("#taskStatusCards"),
   operationOutput: document.querySelector("#operationOutput"),
   progress: document.querySelector("#progressBar"),
   refresh: document.querySelector("#refreshButton"),
   clearLog: document.querySelector("#clearLogButton"),
   defaults: document.querySelector("#defaultsButton"),
   form: document.querySelector("#configurationForm"),
-  firstSummary: document.querySelector("#firstSummary"),
-  secondSummary: document.querySelector("#secondSummary"),
+  closeUi: document.querySelector("#closeUiButton"),
   firstTime: document.querySelector("#firstExecutionTime"),
   firstRatio: document.querySelector("#firstCashRatio"),
   secondTime: document.querySelector("#secondExecutionTime"),
@@ -65,28 +64,108 @@ function fillConfiguration(model) {
   elements.firstRatio.value = current.first_cash_usage_ratio;
   elements.secondTime.value = current.second_execution_time;
   elements.secondRatio.value = current.second_cash_usage_ratio;
-  elements.firstSummary.textContent = `${current.first_execution_time} · ${formatRatio(current.first_cash_usage_ratio)}`;
-  elements.secondSummary.textContent = `${current.second_execution_time} · ${formatRatio(current.second_cash_usage_ratio)}`;
 }
 
 function formatRatio(value) {
   return `${Math.round(Number(value) * 100)}%`;
 }
 
+function appendStatusDetail(container, label, value) {
+  const row = document.createElement("div");
+  row.className = "status-detail";
+  const term = document.createElement("span");
+  term.textContent = label;
+  const description = document.createElement("strong");
+  description.textContent = value || "—";
+  row.append(term, description);
+  container.append(row);
+}
+
+function friendlyState(value) {
+  const states = {
+    ready: "已启用",
+    disabled: "已禁用",
+    running: "运行中",
+    queued: "等待中",
+  };
+  return states[String(value || "").toLowerCase()] || value || "未知";
+}
+
+function friendlyBoolean(value, whenTrue, whenFalse) {
+  if (String(value).toLowerCase() === "true") return whenTrue;
+  if (String(value).toLowerCase() === "false") return whenFalse;
+  return value || "—";
+}
+
+function friendlyStrategyParameters(value) {
+  const fields = Object.fromEntries(
+    String(value || "")
+      .split(";")
+      .map((part) => part.trim().split("=", 2))
+      .filter((pair) => pair.length === 2),
+  );
+  const time = fields.first_order || fields.second_start;
+  const ratio = fields.cash_usage;
+  if (time && ratio) return `${time} / 使用资金 ${ratio}`;
+  return value || "—";
+}
+
+function renderTaskStatus(tasks, statusOk) {
+  elements.taskStatusCards.replaceChildren();
+  if (!statusOk || !Array.isArray(tasks) || tasks.length === 0) {
+    const message = document.createElement("div");
+    message.className = "status-placeholder error-text";
+    message.textContent = "未能提取实盘任务状态，请查看下方操作结果或重新刷新。";
+    elements.taskStatusCards.append(message);
+    return;
+  }
+  tasks.forEach((task, index) => {
+    const card = document.createElement("article");
+    card.className = "task-card";
+    const heading = document.createElement("div");
+    heading.className = "task-card-heading";
+    const titleGroup = document.createElement("div");
+    const stage = document.createElement("span");
+    stage.className = "task-stage";
+    stage.textContent = index === 0 ? "FIRST STAGE" : "SECOND STAGE";
+    const title = document.createElement("h3");
+    title.textContent = index === 0 ? "第一次实盘任务" : "第二次实盘任务";
+    titleGroup.append(stage, title);
+    const badge = document.createElement("span");
+    const normalizedState = String(task.state || "Unknown").toLowerCase();
+    badge.className = `state-badge ${normalizedState === "ready" ? "ready" : normalizedState === "disabled" ? "disabled" : "warning"}`;
+    badge.textContent = friendlyState(task.state);
+    heading.append(titleGroup, badge);
+    card.append(heading);
+    const details = document.createElement("div");
+    details.className = "status-details";
+    appendStatusDetail(details, "执行参数", friendlyStrategyParameters(task.strategy_parameters));
+    appendStatusDetail(details, "计划时间", task.schedule);
+    appendStatusDetail(details, "下次运行", task.next_run_time);
+    appendStatusDetail(details, "任务调度", friendlyBoolean(task.schedule_matches_config, "与配置一致", "与配置不一致"));
+    appendStatusDetail(details, "启用快照", task.live_enable_snapshot);
+    appendStatusDetail(details, "上次运行", task.last_run_time);
+    appendStatusDetail(details, "上次结果", task.last_result);
+    card.append(details);
+    elements.taskStatusCards.append(card);
+  });
+}
+
 async function refresh() {
   if (!token) {
     setConnection("error", "会话令牌缺失");
-    elements.statusOutput.textContent = "请关闭页面并重新执行 .\\rr ui。";
+    renderTaskStatus([], false);
     return;
   }
   try {
     const payload = await api("/api/bootstrap");
     fillConfiguration(payload.configuration);
-    elements.statusOutput.textContent = payload.status.output || "状态命令没有输出。";
+    renderTaskStatus(payload.status.tasks, payload.status.ok);
     setConnection(payload.status.ok ? "online" : "error", payload.status.ok ? "本机服务已连接" : "状态读取失败");
   } catch (error) {
     setConnection("error", "连接失败");
-    elements.statusOutput.textContent = String(error.message || error);
+    renderTaskStatus([], false);
+    elements.operationOutput.textContent = `状态读取失败\n${String(error.message || error)}`;
   }
 }
 
@@ -155,7 +234,41 @@ async function saveConfiguration(event) {
   }
 }
 
+async function closeUi() {
+  if (busy) return;
+  const accepted = await confirmAction(
+    "关闭本机控制台",
+    "只有后台操作全部处于Idle时才能关闭。成功后会结束 rr ui 后台命令并尝试关闭本页。",
+  );
+  if (!accepted) return;
+  setBusy(true, "正在确认后台操作均为Idle并关闭控制台…");
+  try {
+    await api("/api/shutdown", {
+      method: "POST",
+      body: JSON.stringify({ confirmation: "CLOSE UI" }),
+    });
+    sessionStorage.removeItem("rrLocalToken");
+    document.body.replaceChildren();
+    const closed = document.createElement("main");
+    closed.className = "closed-screen";
+    const title = document.createElement("h1");
+    title.textContent = "控制台已安全关闭";
+    const message = document.createElement("p");
+    message.textContent = "后台操作均为Idle，rr ui命令已经结束。若本页没有自动关闭，现在可以直接关闭。";
+    closed.append(title, message);
+    document.body.append(closed);
+    window.setTimeout(() => {
+      window.close();
+      window.setTimeout(() => window.location.replace("about:blank"), 200);
+    }, 150);
+  } catch (error) {
+    elements.operationOutput.textContent = `暂时不能关闭\n${String(error.message || error)}`;
+    setBusy(false);
+  }
+}
+
 elements.refresh.addEventListener("click", refresh);
+elements.closeUi.addEventListener("click", closeUi);
 elements.clearLog.addEventListener("click", () => { elements.operationOutput.textContent = "显示已清空。"; });
 elements.defaults.addEventListener("click", () => {
   if (!defaults || busy) return;

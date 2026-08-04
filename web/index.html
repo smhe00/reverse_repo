@@ -14,7 +14,10 @@
         <h1>国债逆回购控制台</h1>
         <p class="subtitle">把复杂门禁留在程序里，把日常操作放到一张清楚的页面上。</p>
       </div>
-      <div class="connection" id="connectionBadge">正在连接…</div>
+      <div class="header-actions">
+        <div class="connection" id="connectionBadge">正在连接…</div>
+        <button class="button close-ui" id="closeUiButton" type="button">关闭控制台</button>
+      </div>
     </header>
 
     <div class="notice">
@@ -31,17 +34,9 @@
           </div>
           <button class="button secondary" id="refreshButton">刷新状态</button>
         </div>
-        <div class="summary-row">
-          <div class="metric">
-            <span>第一次</span>
-            <strong id="firstSummary">—</strong>
-          </div>
-          <div class="metric">
-            <span>第二次</span>
-            <strong id="secondSummary">—</strong>
-          </div>
+        <div class="task-status-grid" id="taskStatusCards" aria-live="polite">
+          <div class="status-placeholder">正在提取任务状态…</div>
         </div>
-        <pre class="terminal" id="statusOutput">等待本机状态…</pre>
       </section>
 
       <section class="panel config-panel">

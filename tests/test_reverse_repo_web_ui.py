@@ -85,6 +85,43 @@ class ReverseRepoWebUiTests(unittest.TestCase):
         self.assertIs(kwargs["shell"], False)
         self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
 
+    def test_status_output_is_reduced_to_structured_task_fields(self):
+        output = """
+TaskName              : miniQMT Reverse Repo First
+Installed             : True
+State                 : Ready
+StrategyParameters    : first_order=09:30:42; cash_usage=90%
+Schedule              : 周一至周五 09:28:00
+NextRunTime           : 2026/8/5 9:28:00
+
+TaskName              : miniQMT Reverse Repo Second
+Installed             : True
+State                 : Disabled
+StrategyParameters    : second_start=15:10:00; cash_usage=100%
+ScheduleMatchesConfig : True
+LastResult            : 尚未运行 (0x41303)
+"""
+        tasks = web_ui._parse_live_task_status(output)
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual(tasks[0]["state"], "Ready")
+        self.assertEqual(tasks[0]["next_run_time"], "2026/8/5 9:28:00")
+        self.assertEqual(tasks[1]["state"], "Disabled")
+        self.assertEqual(tasks[1]["schedule_matches_config"], "True")
+        self.assertNotIn("output", json.dumps(tasks))
+
+    def test_shutdown_requires_idle_and_prevents_new_operations(self):
+        with self.assertRaises(PermissionError):
+            self.application.prepare_shutdown("wrong")
+        self.application._operation_lock.acquire()
+        try:
+            with self.assertRaises(RuntimeError):
+                self.application.prepare_shutdown("CLOSE UI")
+        finally:
+            self.application._operation_lock.release()
+        self.application.prepare_shutdown("CLOSE UI")
+        with self.assertRaises(RuntimeError):
+            self.application.run_action("status")
+
     def test_configuration_requires_exact_fields_and_explicit_confirmation(self):
         values = {key: str(value) for key, value in VALID_CONFIG.items()}
         values["first_cash_usage_ratio"] = "0.8"
@@ -157,8 +194,25 @@ class ReverseRepoWebUiTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as traversal:
                 urllib.request.urlopen(origin + "/../config/runtime.local.json", timeout=3)
             self.assertEqual(traversal.exception.code, 404)
+
+            shutdown_request = urllib.request.Request(
+                origin + "/api/shutdown",
+                data=json.dumps({"confirmation": "CLOSE UI"}).encode(),
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-RR-Token": token,
+                    "Origin": origin,
+                },
+            )
+            with urllib.request.urlopen(shutdown_request, timeout=3) as response:
+                shutdown_payload = json.load(response)
+            self.assertTrue(shutdown_payload["ok"])
+            thread.join(timeout=3)
+            self.assertFalse(thread.is_alive())
         finally:
-            server.shutdown()
+            if thread.is_alive():
+                server.shutdown()
             server.server_close()
             thread.join(timeout=3)
 
