@@ -1,4 +1,10 @@
-﻿Set-StrictMode -Version Latest
+param(
+    [Parameter(Mandatory = $true)][datetime]$ValidationDate,
+    [Parameter(Mandatory = $true)][string]$ValidationFirstExecutionTime,
+    [Parameter(Mandatory = $true)][string]$ValidationSecondExecutionTime
+)
+
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "reverse_repo_runtime.ps1")
 $repoRoot = Get-ReverseRepoRoot
@@ -15,16 +21,19 @@ $signingKeyPath = Join-Path `
 $strategyConfigPath = Join-Path `
     $repoRoot `
     "config\runtime.local.json"
-$dateStamp = Get-Date -Format "yyyyMMdd"
+$dateStamp = $ValidationDate.ToString("yyyyMMdd")
 $validationDirectory = Join-Path `
     $repoRoot `
     "reports\gc001_intraday\simulation_validation"
-$morningJournal = Join-Path `
+$morningNormalJournal = Join-Path `
     $validationDirectory `
-    "morning_recovery_$dateStamp.journal.json"
-$afternoonJournal = Join-Path `
+    "morning_normal_$dateStamp.journal.json"
+$afternoonNormalJournal = Join-Path `
     $validationDirectory `
     "afternoon_$dateStamp.journal.json"
+$morningRecoveryJournal = Join-Path `
+    $validationDirectory `
+    "morning_recovery_$dateStamp.journal.json"
 $certificatePath = Join-Path $validationDirectory "latest.json"
 $datedCertificatePath = Join-Path `
     $validationDirectory `
@@ -40,14 +49,20 @@ $logPath = Join-Path `
     $qmtPath `
     "--account-binding" `
     $bindingPath `
-    "--morning-journal" `
-    $morningJournal `
-    "--afternoon-journal" `
-    $afternoonJournal `
+    "--morning-normal-journal" `
+    $morningNormalJournal `
+    "--afternoon-normal-journal" `
+    $afternoonNormalJournal `
+    "--morning-recovery-journal" `
+    $morningRecoveryJournal `
     "--signing-key" `
     $signingKeyPath `
     "--strategy-config" `
     $strategyConfigPath `
+    "--validation-first-execution-time" `
+    $ValidationFirstExecutionTime `
+    "--validation-second-execution-time" `
+    $ValidationSecondExecutionTime `
     "--output" `
     $datedCertificatePath *>> $logPath
 $result = $LASTEXITCODE

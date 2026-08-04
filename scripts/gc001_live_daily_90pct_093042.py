@@ -62,6 +62,7 @@ from repo_failure_alert import (
     FailureNotifier,
     load_optional_smtp_failure_notifier,
     notify_journal_failure,
+    notify_journal_success,
     send_standalone_failure,
 )
 
@@ -366,7 +367,7 @@ def _run_morning_command(
         trade_date=trade_date,
     )
     with ExecutionMutex(Path(args.mutex)):
-        return run_morning(
+        result = run_morning(
             qmt_path=qmt_path,
             account_binding=Path(args.account_binding),
             environment=args.environment,
@@ -380,6 +381,15 @@ def _run_morning_command(
             formal_verification=verification,
             notifier=notifier,
         )
+        data = journal.payload.get("data") or {}
+        if result == 0 and data.get("success") is True:
+            notify_journal_success(
+                notifier,
+                journal,
+                environment=args.environment,
+                state=str((journal.payload.get("machine") or {}).get("state")),
+            )
+        return result
 
 
 def run_morning(
@@ -621,6 +631,7 @@ def run_morning(
                     target_at=target_at,
                     quote_deadline=quote_deadline,
                     maximum_principal_yuan=maximum_principal_yuan,
+                    cash_usage_ratio=cash_usage_ratio,
                     remark_prefix=remark_prefix,
                     sell_order_type=int(xtconstant.STOCK_SELL),
                 )
@@ -929,6 +940,7 @@ def _wait_for_submission_snapshot(
     target_at: datetime,
     quote_deadline: datetime,
     maximum_principal_yuan: int,
+    cash_usage_ratio: float,
     remark_prefix: str,
     sell_order_type: int,
 ) -> tuple[MorningLimitPlan | None, float]:

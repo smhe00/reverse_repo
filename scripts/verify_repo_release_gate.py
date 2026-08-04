@@ -9,7 +9,6 @@ from pathlib import Path
 
 from repo_execution_core import (
     load_account_binding,
-    reverse_repo_schedule_config_sha256,
     reverse_repo_strategy_config_sha256,
     xtquant_runtime_sha256,
 )
@@ -51,7 +50,7 @@ def main() -> int:
         raise RuntimeError(
             "simulation verification certificate is missing or unreadable"
         ) from exc
-    if certificate.get("schema_version") != 2:
+    if certificate.get("schema_version") != 3:
         raise RuntimeError(
             "unsupported simulation verification certificate"
         )
@@ -88,15 +87,21 @@ def main() -> int:
         "asset_query_ok",
         "order_query_ok",
         "quote_subscription_ok",
-        "morning_order_lifecycle_ok",
-        "afternoon_order_lifecycle_ok",
-        "restart_recovery_ok",
+        "morning_normal_order_lifecycle_ok",
+        "morning_normal_production_path_ok",
+        "afternoon_normal_order_lifecycle_ok",
+        "morning_fault_recovery_ok",
+        "fault_injection_isolated",
+        "fault_state_space_verified",
+        "normal_schedule_paths_match_validation_plan",
+        "evidence_files_isolated",
         "all_validation_orders_terminal",
         "all_validation_remarks_unique",
         "validation_namespaces_ok",
         "validation_order_identity_ok",
-        "morning_broker_evidence_ok",
-        "afternoon_broker_evidence_ok",
+        "morning_normal_broker_evidence_ok",
+        "afternoon_normal_broker_evidence_ok",
+        "morning_recovery_broker_evidence_ok",
     }
     checks = certificate.get("checks")
     if not isinstance(checks, dict):
@@ -146,18 +151,9 @@ def _verify_schedule_configuration(
     certificate: dict[str, object],
     strategy_config_path: Path,
 ) -> None:
-    # Parse and validate all four operational parameters first. Only the two
-    # execution times belong to the day-long capability certificate; exact
-    # ratios are locked separately by the live-enable manifest.
+    # The certificate proves executor capability. The signed live-enable
+    # manifest separately locks all four current live parameters.
     reverse_repo_strategy_config_sha256(strategy_config_path)
-    if (
-        certificate.get("schedule_config_sha256")
-        != reverse_repo_schedule_config_sha256(strategy_config_path)
-    ):
-        raise RuntimeError(
-            "simulation certificate does not match the current execution "
-            "schedule"
-        )
 
 
 def _verify_signature(
@@ -201,7 +197,11 @@ def _verify_evidence(
     evidence = certificate.get("evidence")
     if not isinstance(evidence, dict):
         raise RuntimeError("simulation evidence hashes are missing")
-    for prefix in ("morning", "afternoon"):
+    for prefix in (
+        "morning_normal",
+        "afternoon_normal",
+        "morning_recovery",
+    ):
         name = str(evidence.get(f"{prefix}_journal_name", ""))
         if Path(name).name != name or not name:
             raise RuntimeError("simulation evidence filename is invalid")

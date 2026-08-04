@@ -46,6 +46,13 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
 & $windowsPowerShell `
     -NoProfile `
     -ExecutionPolicy Bypass `
+    -File (Join-Path $bundleRoot "tests\test_configure_strategy.ps1")
+if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+    throw "Transactional strategy configuration verification failed."
+}
+& $windowsPowerShell `
+    -NoProfile `
+    -ExecutionPolicy Bypass `
     -File (Join-Path $bundleRoot "tests\test_anonymous_update.ps1")
 if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     throw "Anonymous no-Git update verification failed."

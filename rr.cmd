@@ -8,7 +8,11 @@ set "PSARGS=-NoProfile -ExecutionPolicy Bypass -File"
 
 if "%~1"=="" (
     "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Help
-    exit /b !ERRORLEVEL!
+    set "RESULT=!ERRORLEVEL!"
+    echo.
+    echo   .\rr cfg
+    echo       Edit strategy parameters safely; requires rr off and runs verify.
+    exit /b !RESULT!
 )
 if /I "%~1"=="init" (
     "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Initialize
@@ -40,6 +44,10 @@ if /I "%~1"=="on" (
 )
 if /I "%~1"=="off" (
     "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Disable
+    exit /b !ERRORLEVEL!
+)
+if /I "%~1"=="cfg" (
+    "%POWERSHELL%" %PSARGS% "%~dp0scripts\configure_reverse_repo_strategy.ps1"
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="mail" (
@@ -84,7 +92,11 @@ if /I "%~1"=="stress" (
 )
 if /I "%~1"=="help" (
     "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Help
-    exit /b !ERRORLEVEL!
+    set "RESULT=!ERRORLEVEL!"
+    echo.
+    echo   .\rr cfg
+    echo       Edit strategy parameters safely; requires rr off and runs verify.
+    exit /b !RESULT!
 )
 
 "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Help

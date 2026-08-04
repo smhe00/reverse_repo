@@ -65,6 +65,7 @@ from repo_failure_alert import (
     FailureNotifier,
     load_optional_smtp_failure_notifier,
     notify_journal_failure,
+    notify_journal_success,
     send_standalone_failure,
 )
 
@@ -372,7 +373,7 @@ def _run_afternoon_command(
         Path(args.mutex),
         timeout_seconds=mutex_wait_seconds,
     ):
-        return run_afternoon(
+        result = run_afternoon(
             qmt_path=qmt_path,
             account_binding=Path(args.account_binding),
             environment=args.environment,
@@ -388,6 +389,15 @@ def _run_afternoon_command(
             formal_verification=verification,
             notifier=notifier,
         )
+        data = journal.payload.get("data") or {}
+        if result == 0 and data.get("success") is True:
+            notify_journal_success(
+                notifier,
+                journal,
+                environment=args.environment,
+                state=str((journal.payload.get("machine") or {}).get("state")),
+            )
+        return result
 
 
 def run_afternoon(

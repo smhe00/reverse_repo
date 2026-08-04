@@ -37,6 +37,10 @@ $knownTaskNames = @(
     "miniQMT SIM Repo V2 Certificate",
     "miniQMT SIM Repo V2 Morning Recovery",
     "miniQMT SIM Repo V2 Afternoon",
+    "miniQMT SIM Repo V3 Morning Normal",
+    "miniQMT SIM Repo V3 Afternoon Normal",
+    "miniQMT SIM Repo V3 Morning Recovery",
+    "miniQMT SIM Repo V3 Certificate",
     "miniQMT LIVE READONLY Morning",
     "miniQMT LIVE READONLY Afternoon",
     "miniQMT Backtest DB Update Yesterday"

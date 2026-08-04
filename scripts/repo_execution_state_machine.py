@@ -21,6 +21,12 @@ EXECUTION_SOURCE_FILES = (
     "reverse_repo_runtime.ps1",
     "run_gc001_daily_90pct_093042.ps1",
     "run_gc001_r001_afternoon_sweep.ps1",
+    "prepare_repo_simulation_morning_recovery.py",
+    "run_repo_simulation_morning_normal_validation.ps1",
+    "run_repo_simulation_morning_recovery_validation.ps1",
+    "run_repo_simulation_afternoon_validation.ps1",
+    "run_repo_simulation_certificate.ps1",
+    "install_repo_simulation_validation_tasks.ps1",
     "manage_reverse_repo_tasks.ps1",
 )
 

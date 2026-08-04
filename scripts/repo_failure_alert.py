@@ -56,6 +56,7 @@ class FailureAlert:
     occurred_at: str
     error_type: str | None = None
     error_message: str | None = None
+    kind: str = "failure"
 
     @property
     def key(self) -> str:
@@ -66,6 +67,7 @@ class FailureAlert:
             "event": self.event,
             "reason": self.reason,
             "unresolved_order": self.unresolved_order,
+            "kind": self.kind,
         }
         payload = json.dumps(
             material,
@@ -256,7 +258,67 @@ def notify_journal_failure(
         error_type=_error_type(error),
         error_message=_error_message(error),
     )
-    previous = _previous_delivery(journal.payload)
+    return _deliver_journal_alert(
+        notifier,
+        journal,
+        alert,
+        data_field="failure_alert",
+    )
+
+
+def notify_journal_success(
+    notifier: FailureNotifier | None,
+    journal: JournalLike,
+    *,
+    environment: str,
+    state: str,
+) -> AlertDelivery:
+    data = journal.payload.get("data") or {}
+    order = data.get("current_order") or data.get("last_terminal_order") or {}
+    if not isinstance(order, Mapping):
+        order = {}
+    filled = int(
+        data.get(
+            "accounted_filled_principal_yuan",
+            data.get("filled_principal_yuan", 0),
+        )
+        or 0
+    )
+    details = (
+        f"成交本金={filled}元；证券={order.get('symbol', '')}；"
+        f"委托号={order.get('order_id', '')}；"
+        f"委托利率={order.get('limit_price', '')}%；"
+        f"成交均价={order.get('traded_price', '')}%；"
+        f"成交数量={order.get('traded_volume', '')}"
+    )
+    alert = FailureAlert(
+        strategy=str(journal.strategy),
+        trade_date=str(journal.trade_date),
+        environment=str(environment),
+        state=str(state),
+        event="execution_completed",
+        reason=details,
+        unresolved_order=False,
+        journal_path=str(Path(journal.path).resolve()),
+        occurred_at=datetime.now().astimezone().isoformat(),
+        kind="success",
+    )
+    return _deliver_journal_alert(
+        notifier,
+        journal,
+        alert,
+        data_field="success_alert",
+    )
+
+
+def _deliver_journal_alert(
+    notifier: FailureNotifier | None,
+    journal: JournalLike,
+    alert: FailureAlert,
+    *,
+    data_field: str,
+) -> AlertDelivery:
+    previous = _previous_delivery(journal.payload, data_field=data_field)
     if (
         previous is not None
         and previous.get("key") == alert.key
@@ -300,7 +362,7 @@ def notify_journal_failure(
                 attempts=_notifier_attempts(notifier),
             )
     try:
-        journal.update_data(failure_alert=asdict(delivery))
+        journal.update_data(**{data_field: asdict(delivery)})
     except Exception:  # noqa: BLE001
         # Alerting is a side effect after fail-closed state persistence.
         # It must never reopen trading or replace the original exit result.
@@ -338,9 +400,10 @@ def _build_message(
     config: SmtpAlertConfig,
     alert: FailureAlert,
 ) -> EmailMessage:
+    successful = alert.kind == "success"
     subject = (
-        "[miniQMT][需人工检查]"
-        f"[{alert.environment.upper()}] {alert.strategy} "
+        ("[miniQMT][执行成功]" if successful else "[miniQMT][需人工检查]")
+        + f"[{alert.environment.upper()}] {alert.strategy} "
         f"{alert.trade_date}"
     )
     message = EmailMessage()
@@ -348,7 +411,11 @@ def _build_message(
     message["To"] = ", ".join(config.to_addresses)
     message["Subject"] = _clean_header(subject)
     lines = [
-        "miniQMT 逆回购执行器已安全停止，需要人工检查。",
+        (
+            "miniQMT 逆回购执行已成功完成。"
+            if successful
+            else "miniQMT 逆回购执行器已安全停止，需要人工检查。"
+        ),
         "",
         f"策略：{alert.strategy}",
         f"交易日：{alert.trade_date}",
@@ -370,12 +437,13 @@ def _build_message(
                 f"异常信息：{alert.error_message or ''}",
             ]
         )
-    lines.extend(
-        [
-            "",
-            "安全约束：程序没有自动补单、追价、改价或扩大金额。",
-        ]
-    )
+    if not successful:
+        lines.extend(
+            [
+                "",
+                "安全约束：程序没有自动补单、追价、改价或扩大金额。",
+            ]
+        )
     message.set_content("\n".join(lines), charset="utf-8")
     return message
 
@@ -498,11 +566,13 @@ def _smtp_authenticate_and_send(
 
 def _previous_delivery(
     payload: Mapping[str, object],
+    *,
+    data_field: str = "failure_alert",
 ) -> Mapping[str, object] | None:
     data = payload.get("data")
     if not isinstance(data, Mapping):
         return None
-    previous = data.get("failure_alert")
+    previous = data.get(data_field)
     return previous if isinstance(previous, Mapping) else None
 
 

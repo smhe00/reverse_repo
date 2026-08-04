@@ -1,6 +1,6 @@
 param(
-    [Parameter(Mandatory = $true)][string]$RecoveryExecutionTime,
-    [string]$ValidationRemarkRoot = "repo_morn_rec"
+    [string]$ValidationExecutionTime = "",
+    [string]$ValidationRemarkRoot = "repo_morn_norm"
 )
 
 Set-StrictMode -Version Latest
@@ -11,20 +11,21 @@ Set-Location -LiteralPath $repoRoot
 
 $pythonPath = Get-ReverseRepoPython
 $qmtPath = Get-ReverseRepoQmtPath -Environment "simulation"
-$null = Get-ReverseRepoMorningExecutionTime
-$null = Get-ReverseRepoSecondExecutionTime
-$morningExecutionTime = $RecoveryExecutionTime
-$morningCashUsageRatio = Get-ReverseRepoMorningCashUsageRatio
-$validationCashUsageRatio = if ($morningCashUsageRatio -eq 0) {
-    1.0
+$morningExecutionTime = if ([string]::IsNullOrWhiteSpace(
+    $ValidationExecutionTime
+)) {
+    Format-ReverseRepoClockTime (Get-ReverseRepoMorningExecutionTime)
 }
 else {
-    $morningCashUsageRatio
+    $ValidationExecutionTime
 }
-$morningCashUsageRatioText = [string]::Format(
+$null = Get-ReverseRepoSecondExecutionTime
+$configuredRatio = Get-ReverseRepoMorningCashUsageRatio
+$validationRatio = if ($configuredRatio -eq 0) { 1.0 } else { $configuredRatio }
+$ratioText = [string]::Format(
     [Globalization.CultureInfo]::InvariantCulture,
     "{0:R}",
-    $validationCashUsageRatio
+    $validationRatio
 )
 $bindingPath = Join-Path `
     $repoRoot `
@@ -40,19 +41,25 @@ $validationDirectory = Join-Path `
     "reports\gc001_intraday\simulation_validation"
 $journalPath = Join-Path `
     $validationDirectory `
-    "morning_recovery_$dateStamp.journal.json"
+    "morning_normal_$dateStamp.journal.json"
 $mutexPath = Join-Path `
     $validationDirectory `
-    "simulation_fault_execution.lock"
+    "simulation_normal_execution.lock"
 $logPath = Join-Path `
     $validationDirectory `
-    "morning_recovery_$dateStamp.log"
+    "morning_normal_$dateStamp.log"
 
 New-Item -ItemType Directory -Force -Path $validationDirectory | Out-Null
 foreach ($path in @($pythonPath, $bindingPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "Simulation validation dependency is missing: $path"
+        throw "Simulation normal-path dependency is missing: $path"
     }
+}
+if (Test-Path -LiteralPath $journalPath) {
+    throw (
+        "Simulation morning normal-path journal already exists; " +
+        "refusing to reuse evidence: $journalPath"
+    )
 }
 
 $alertArguments = @()
@@ -63,29 +70,9 @@ if ($alertEnabled) {
     $alertArguments = @("--alert-config", $alertConfigPath)
 }
 try {
+    # This is the production morning Python entry point. Simulation-only flags
+    # cap principal at CNY 1,000 and isolate the broker remark namespace.
     & $pythonPath `
-    (Join-Path $PSScriptRoot "prepare_repo_simulation_morning_recovery.py") `
-    "--qmt-path" `
-    $qmtPath `
-    "--trade-date" `
-    $tradeDate `
-    "--journal" `
-    $journalPath `
-    "--account-binding" `
-    $bindingPath `
-    "--mutex" `
-    $mutexPath `
-    "--execution-time" `
-    $morningExecutionTime `
-    "--cash-usage-ratio" `
-    $morningCashUsageRatioText `
-    "--remark-root" `
-    $ValidationRemarkRoot *>> $logPath
-if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
-    throw "Simulation crash-boundary preparation failed."
-}
-
-& $pythonPath `
     (Join-Path $PSScriptRoot "gc001_live_daily_90pct_093042.py") `
     "--qmt-path" `
     $qmtPath `
@@ -104,7 +91,7 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     "--execution-time" `
     $morningExecutionTime `
     "--cash-usage-ratio" `
-    $morningCashUsageRatioText `
+    $ratioText `
         "--remark-root" `
         $ValidationRemarkRoot `
         @alertArguments *>> $logPath
@@ -114,6 +101,6 @@ finally {
     Disable-ReverseRepoOptionalFailureEmail
 }
 if ($null -eq $result) {
-    throw "Simulation morning executor returned no exit code."
+    throw "Simulation morning normal-path executor returned no exit code."
 }
 exit ([int]$result)

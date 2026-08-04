@@ -20,7 +20,6 @@ from repo_execution_core import (
     query_asset_strict,
     select_bound_account,
     xtquant_runtime_sha256,
-    reverse_repo_schedule_config_sha256,
     reverse_repo_strategy_config_sha256,
 )
 from repo_execution_state_machine import verify_state_machines
@@ -37,10 +36,13 @@ def main() -> int:
 
     certify = subparsers.add_parser("certify")
     _common_arguments(certify)
-    certify.add_argument("--morning-journal", required=True)
-    certify.add_argument("--afternoon-journal", required=True)
+    certify.add_argument("--morning-normal-journal", required=True)
+    certify.add_argument("--afternoon-normal-journal", required=True)
+    certify.add_argument("--morning-recovery-journal", required=True)
     certify.add_argument("--signing-key", required=True)
     certify.add_argument("--strategy-config", required=True)
+    certify.add_argument("--validation-first-execution-time", required=True)
+    certify.add_argument("--validation-second-execution-time", required=True)
     certify.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -55,18 +57,31 @@ def main() -> int:
     result = certify_simulation(
         qmt_path=Path(args.qmt_path),
         account_binding=Path(args.account_binding),
-        morning_journal=Path(args.morning_journal),
-        afternoon_journal=Path(args.afternoon_journal),
+        morning_normal_journal=Path(args.morning_normal_journal),
+        afternoon_normal_journal=Path(args.afternoon_normal_journal),
+        morning_recovery_journal=Path(args.morning_recovery_journal),
         strategy_config=Path(args.strategy_config),
+        validation_first_execution_time=args.validation_first_execution_time,
+        validation_second_execution_time=args.validation_second_execution_time,
     )
     result["evidence"] = {
-        "morning_journal_name": Path(args.morning_journal).name,
-        "morning_journal_sha256": _file_sha256(
-            Path(args.morning_journal)
+        "morning_normal_journal_name": Path(
+            args.morning_normal_journal
+        ).name,
+        "morning_normal_journal_sha256": _file_sha256(
+            Path(args.morning_normal_journal)
         ),
-        "afternoon_journal_name": Path(args.afternoon_journal).name,
-        "afternoon_journal_sha256": _file_sha256(
-            Path(args.afternoon_journal)
+        "afternoon_normal_journal_name": Path(
+            args.afternoon_normal_journal
+        ).name,
+        "afternoon_normal_journal_sha256": _file_sha256(
+            Path(args.afternoon_normal_journal)
+        ),
+        "morning_recovery_journal_name": Path(
+            args.morning_recovery_journal
+        ).name,
+        "morning_recovery_journal_sha256": _file_sha256(
+            Path(args.morning_recovery_journal)
         ),
     }
     result["signature_hmac_sha256"] = _sign_payload(
@@ -174,31 +189,39 @@ def certify_simulation(
     *,
     qmt_path: Path,
     account_binding: Path,
-    morning_journal: Path,
-    afternoon_journal: Path,
+    morning_normal_journal: Path,
+    afternoon_normal_journal: Path,
+    morning_recovery_journal: Path,
     strategy_config: Path,
+    validation_first_execution_time: str,
+    validation_second_execution_time: str,
 ) -> dict[str, Any]:
     preflight = simulation_preflight(
         qmt_path=qmt_path,
         account_binding=account_binding,
     )
     formal = verify_state_machines()
-    morning = _load_journal(morning_journal)
-    afternoon = _load_journal(afternoon_journal)
+    morning_normal = _load_journal(morning_normal_journal)
+    afternoon_normal = _load_journal(afternoon_normal_journal)
+    morning_recovery = _load_journal(morning_recovery_journal)
     broker_orders = _simulation_orders(
         qmt_path=qmt_path,
         account_binding=account_binding,
     )
-    morning_data = dict(morning.get("data") or {})
-    afternoon_data = dict(afternoon.get("data") or {})
-    morning_machine = dict(morning.get("machine") or {})
-    afternoon_machine = dict(afternoon.get("machine") or {})
-    morning_history = list(morning.get("history") or [])
+    morning_normal_data = dict(morning_normal.get("data") or {})
+    afternoon_normal_data = dict(afternoon_normal.get("data") or {})
+    morning_recovery_data = dict(morning_recovery.get("data") or {})
+    morning_normal_machine = dict(morning_normal.get("machine") or {})
+    afternoon_normal_machine = dict(afternoon_normal.get("machine") or {})
+    morning_recovery_machine = dict(morning_recovery.get("machine") or {})
+    morning_normal_history = list(morning_normal.get("history") or [])
+    morning_recovery_history = list(morning_recovery.get("history") or [])
 
     relevant, evidence_checks = _validation_order_evidence_checks(
         broker_orders=broker_orders,
-        morning_data=morning_data,
-        afternoon_data=afternoon_data,
+        morning_normal_data=morning_normal_data,
+        afternoon_normal_data=afternoon_normal_data,
+        morning_recovery_data=morning_recovery_data,
     )
     remarks = [order.remark for order in relevant]
     broker_terminal = all(
@@ -211,38 +234,58 @@ def certify_simulation(
         }
         for order in relevant
     )
-    morning_ok = (
-        morning_machine.get("state")
+    normal_events = {
+        str(record.get("event")) for record in morning_normal_history
+    }
+    recovery_events = {
+        str(record.get("event")) for record in morning_recovery_history
+    }
+    morning_normal_ok = (
+        morning_normal_machine.get("state")
         in {"done_filled", "done_partial"}
-        and int(morning_data.get("filled_principal_yuan", 0)) > 0
+        and int(morning_normal_data.get("filled_principal_yuan", 0)) > 0
         and not bool(
-            (morning_machine.get("facts") or {}).get(
+            (morning_normal_machine.get("facts") or {}).get(
                 "unresolved_order"
             )
         )
     )
-    afternoon_ok = (
-        afternoon_machine.get("state") == "complete_at_hard_stop"
+    morning_normal_production_path_ok = (
+        {
+            "begin",
+            "preflight_ok",
+            "recovery_clear",
+            "trigger",
+            "snapshot_ok",
+            "intent_persisted",
+            "submit_accepted",
+        }
+        <= normal_events
+        and "restart" not in normal_events
+        and not morning_normal_data.get("fault_injection")
+    )
+    afternoon_normal_ok = (
+        afternoon_normal_machine.get("state") == "complete_at_hard_stop"
         and int(
-            afternoon_data.get(
+            afternoon_normal_data.get(
                 "accounted_filled_principal_yuan",
                 0,
             )
         )
         > 0
         and not bool(
-            (afternoon_machine.get("facts") or {}).get(
+            (afternoon_normal_machine.get("facts") or {}).get(
                 "unresolved_order"
             )
         )
     )
-    history_events = {
-        str(record.get("event")) for record in morning_history
-    }
-    restart_ok = (
-        "restart" in history_events
+    morning_recovery_ok = (
+        morning_recovery_machine.get("state")
+        in {"done_filled", "done_partial"}
+        and int(morning_recovery_data.get("filled_principal_yuan", 0)) > 0
+        and "restart" in recovery_events
         and bool(
-            history_events
+            recovery_events
             & {
                 "recovery_active",
                 "recovery_cancel_pending",
@@ -250,15 +293,67 @@ def certify_simulation(
             }
         )
         and (
-            "reconciled_full" in history_events
-            or "reconciled_partial" in history_events
+            "reconciled_full" in recovery_events
+            or "reconciled_partial" in recovery_events
+        )
+        and not bool(
+            (morning_recovery_machine.get("facts") or {}).get(
+                "unresolved_order"
+            )
+        )
+    )
+    normal_prefix = str(morning_normal_data.get("remark_prefix", ""))
+    recovery_prefix = str(morning_recovery_data.get("remark_prefix", ""))
+    afternoon_prefix = str(afternoon_normal_data.get("remark_prefix", ""))
+    fault_injection_isolated = (
+        morning_normal.get("trade_date") == afternoon_normal.get("trade_date")
+        and morning_recovery.get("trade_date")
+        == morning_normal.get("trade_date")
+        and normal_prefix.startswith("repo_morn_no")
+        and recovery_prefix.startswith("repo_morn_re")
+        and afternoon_prefix.startswith("repo_afternoon_v2_")
+        and len({normal_prefix, recovery_prefix, afternoon_prefix}) == 3
+        and morning_recovery_data.get("fault_injection")
+        == "crash_after_broker_accept_before_response_journal"
+        and not morning_normal_data.get("fault_injection")
+        and not afternoon_normal_data.get("fault_injection")
+    )
+    configured_schedule_ok = _journals_match_validation_schedule(
+        first_time=validation_first_execution_time,
+        second_time=validation_second_execution_time,
+        morning_normal_data=morning_normal_data,
+        afternoon_normal_data=afternoon_normal_data,
+        morning_recovery_data=morning_recovery_data,
+    )
+    fault_state_space_verified = all(
+        int(formal[phase][field]) == 0
+        for phase in ("morning", "afternoon")
+        for field in (
+            "unreachable_states",
+            "unreachable_transitions",
+            "states_without_terminal_path",
+            "invariant_violations",
         )
     )
     checks = {
         **dict(preflight["checks"]),
-        "morning_order_lifecycle_ok": morning_ok,
-        "afternoon_order_lifecycle_ok": afternoon_ok,
-        "restart_recovery_ok": restart_ok,
+        "morning_normal_order_lifecycle_ok": morning_normal_ok,
+        "morning_normal_production_path_ok": (
+            morning_normal_production_path_ok
+        ),
+        "afternoon_normal_order_lifecycle_ok": afternoon_normal_ok,
+        "morning_fault_recovery_ok": morning_recovery_ok,
+        "fault_injection_isolated": fault_injection_isolated,
+        "fault_state_space_verified": fault_state_space_verified,
+        "normal_schedule_paths_match_validation_plan": configured_schedule_ok,
+        "evidence_files_isolated": len(
+            {
+                morning_normal_journal.resolve(),
+                afternoon_normal_journal.resolve(),
+                morning_recovery_journal.resolve(),
+            }
+        )
+        == 3,
         "all_validation_orders_terminal": broker_terminal,
         "all_validation_remarks_unique": (
             len(remarks) == len(set(remarks))
@@ -266,7 +361,7 @@ def certify_simulation(
         **evidence_checks,
     }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "environment": "simulation",
         "certified_at": datetime.now().astimezone().isoformat(),
         "passed": all(checks.values()),
@@ -280,35 +375,69 @@ def certify_simulation(
         "strategy_config_sha256": (
             reverse_repo_strategy_config_sha256(strategy_config)
         ),
-        "schedule_config_sha256": (
-            reverse_repo_schedule_config_sha256(strategy_config)
-        ),
         "checks": checks,
         "account_label": preflight["account_label"],
         "account_id_persisted": False,
-        "morning_state": morning_machine.get("state"),
-        "afternoon_state": afternoon_machine.get("state"),
+        "morning_normal_state": morning_normal_machine.get("state"),
+        "afternoon_normal_state": afternoon_normal_machine.get("state"),
+        "morning_recovery_state": morning_recovery_machine.get("state"),
         "validation_order_count": len(relevant),
     }
+
+
+def _journals_match_validation_schedule(
+    *,
+    first_time: str,
+    second_time: str,
+    morning_normal_data: Mapping[str, object],
+    afternoon_normal_data: Mapping[str, object],
+    morning_recovery_data: Mapping[str, object],
+) -> bool:
+    try:
+        def journal_time(data: Mapping[str, object], name: str) -> str:
+            return datetime.fromisoformat(str(data[name])).strftime("%H:%M:%S")
+
+        recovery_time = journal_time(morning_recovery_data, "target_at")
+        recovery_clock = datetime.strptime(recovery_time, "%H:%M:%S").time()
+        recovery_is_trading_time = (
+            datetime.strptime("09:30:00", "%H:%M:%S").time()
+            <= recovery_clock
+            <= datetime.strptime("11:28:00", "%H:%M:%S").time()
+        ) or (
+            datetime.strptime("13:00:00", "%H:%M:%S").time()
+            <= recovery_clock
+            <= datetime.strptime("15:28:00", "%H:%M:%S").time()
+        )
+        return (
+            journal_time(morning_normal_data, "target_at") == first_time
+            and journal_time(afternoon_normal_data, "execution_at")
+            == second_time
+            and recovery_is_trading_time
+            and recovery_time not in {first_time, second_time}
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def _validation_order_evidence_checks(
     *,
     broker_orders: list[Any],
-    morning_data: Mapping[str, object],
-    afternoon_data: Mapping[str, object],
+    morning_normal_data: Mapping[str, object],
+    afternoon_normal_data: Mapping[str, object],
+    morning_recovery_data: Mapping[str, object],
 ) -> tuple[list[Any], dict[str, bool]]:
     """Bind signed journals to their exact broker-side namespaces/orders."""
 
     prefixes = (
-        str(morning_data.get("remark_prefix", "")),
-        str(afternoon_data.get("remark_prefix", "")),
+        str(morning_normal_data.get("remark_prefix", "")),
+        str(afternoon_normal_data.get("remark_prefix", "")),
+        str(morning_recovery_data.get("remark_prefix", "")),
     )
     namespace_ok = all(
         re.fullmatch(r"[a-z0-9_]{3,23}_[0-9]{8}_", prefix)
         is not None
         for prefix in prefixes
-    ) and prefixes[0] != prefixes[1]
+    ) and len(set(prefixes)) == 3
     relevant = (
         [
             order
@@ -319,16 +448,24 @@ def _validation_order_evidence_checks(
         else []
     )
 
-    morning_payload = morning_data.get("current_order")
-    afternoon_payload = afternoon_data.get("last_terminal_order")
-    morning_remark = (
-        str(morning_payload.get("remark", ""))
-        if isinstance(morning_payload, Mapping)
+    morning_normal_payload = morning_normal_data.get("current_order")
+    afternoon_normal_payload = afternoon_normal_data.get(
+        "last_terminal_order"
+    )
+    morning_recovery_payload = morning_recovery_data.get("current_order")
+    morning_normal_remark = (
+        str(morning_normal_payload.get("remark", ""))
+        if isinstance(morning_normal_payload, Mapping)
         else ""
     )
-    afternoon_remark = (
-        str(afternoon_payload.get("remark", ""))
-        if isinstance(afternoon_payload, Mapping)
+    afternoon_normal_remark = (
+        str(afternoon_normal_payload.get("remark", ""))
+        if isinstance(afternoon_normal_payload, Mapping)
+        else ""
+    )
+    morning_recovery_remark = (
+        str(morning_recovery_payload.get("remark", ""))
+        if isinstance(morning_recovery_payload, Mapping)
         else ""
     )
 
@@ -354,7 +491,10 @@ def _validation_order_evidence_checks(
             order.strategy_name == "repo_morning_v2"
             and order.symbol == GC001
         )
-        if order.remark.startswith(prefixes[0])
+        if (
+            order.remark.startswith(prefixes[0])
+            or order.remark.startswith(prefixes[2])
+        )
         else (
             order.strategy_name == "repo_afternoon_v2"
             and order.symbol in {GC001, R001}
@@ -364,17 +504,23 @@ def _validation_order_evidence_checks(
     checks = {
         "validation_namespaces_ok": namespace_ok,
         "validation_order_identity_ok": identity_ok,
-        "morning_broker_evidence_ok": matches(
-            remark=morning_remark,
+        "morning_normal_broker_evidence_ok": matches(
+            remark=morning_normal_remark,
             prefix=prefixes[0],
             strategy="repo_morning_v2",
             symbols={GC001},
         ),
-        "afternoon_broker_evidence_ok": matches(
-            remark=afternoon_remark,
+        "afternoon_normal_broker_evidence_ok": matches(
+            remark=afternoon_normal_remark,
             prefix=prefixes[1],
             strategy="repo_afternoon_v2",
             symbols={GC001, R001},
+        ),
+        "morning_recovery_broker_evidence_ok": matches(
+            remark=morning_recovery_remark,
+            prefix=prefixes[2],
+            strategy="repo_morning_v2",
+            symbols={GC001},
         ),
     }
     return relevant, checks

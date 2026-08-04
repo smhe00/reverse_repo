@@ -190,6 +190,38 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("-Action CertDisable", command)
         self.assertIn("-Action CertRemove", command)
 
+    def test_rr_cfg_is_transactional_and_requires_live_tasks_off(self):
+        command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
+        configurator_path = (
+            ROOT / "scripts" / "configure_reverse_repo_strategy.ps1"
+        )
+        configurator = configurator_path.read_text(encoding="ascii")
+        execution_spec = (
+            ROOT / "scripts" / "repo_execution_state_machine.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('if /I "%~1"=="cfg"', command)
+        self.assertIn("configure_reverse_repo_strategy.ps1", command)
+        self.assertIn("Assert-LiveStrategyIsOff", configurator)
+        self.assertIn('[string]$task.State -ne "Disabled"', configurator)
+        self.assertIn("Get-ReverseRepoLiveEnableManifestPath", configurator)
+        self.assertIn("Write-BytesAtomically", configurator)
+        self.assertIn("$originalBytes", configurator)
+        self.assertIn("Running full local verification", configurator)
+        self.assertIn("-File $verifyPath", configurator)
+        self.assertIn("Verified candidate parameters", configurator)
+        self.assertIn("Previous runtime configuration restored", configurator)
+        self.assertIn('"config\\runtime.example.json"', configurator)
+        self.assertIn("0..1 inclusive", configurator)
+        self.assertIn("at least first+5m", configurator)
+        self.assertIn("[1/4] First execution time", configurator)
+        self.assertIn("[4/4] Second cash usage ratio", configurator)
+        self.assertIn("Enter=keep current | D=use default | Q=cancel", configurator)
+        self.assertIn("Save the verified parameters?", configurator)
+        self.assertNotIn(
+            '"configure_reverse_repo_strategy.ps1"',
+            execution_spec,
+        )
+
     def test_rr_clear_removes_only_known_project_tasks(self):
         command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
         manager = (
@@ -207,7 +239,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             "miniQMT LIVE READONLY Morning",
             "miniQMT LIVE READONLY Afternoon",
             "miniQMT SIM Interface Stress 5Hz",
-            "miniQMT SIM Repo V2 Certificate",
+            "miniQMT SIM Repo V3 Certificate",
         ):
             self.assertIn(task_name, manager)
         self.assertIn("残留0项", manager)
@@ -229,6 +261,23 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn('"CertStatus"', manager)
         self.assertIn("Get-SimulationCertificationTaskStatus", manager)
 
+    def test_rr_on_reconciles_tasks_before_arming_live_execution(self):
+        manager = (
+            ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"
+        ).read_text(encoding="utf-8")
+        enabled = manager.split(
+            "function Set-ManagedTasksEnabled",
+            1,
+        )[1].split("function Assert-ManagedTasksMatchConfig", 1)[0]
+        install = enabled.index("Install-ManagedTasks")
+        schedule_check = enabled.index("Assert-ManagedTasksMatchConfig")
+        gate = enabled.index("Assert-LiveEnableGate")
+        manifest = enabled.index("New-ReverseRepoLiveEnableManifest")
+        self.assertLess(install, schedule_check)
+        self.assertLess(schedule_check, gate)
+        self.assertLess(gate, manifest)
+        self.assertIn("Cannot install or update running live tasks", manager)
+
     def test_certification_installer_has_no_stale_fixed_default_date(self):
         installer = (
             ROOT
@@ -238,6 +287,40 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("[datetime]::MinValue", installer)
         self.assertNotIn('2026-08-03', installer)
         self.assertIn("Simulation certification date must be a weekday", installer)
+        self.assertIn("Find-IsolatedRecoveryExecutionTime", installer)
+        self.assertIn("miniQMT SIM Repo V3 Morning Normal", installer)
+        self.assertIn("miniQMT SIM Repo V3 Afternoon Normal", installer)
+        self.assertIn("miniQMT SIM Repo V3 Morning Recovery", installer)
+        self.assertIn("miniQMT SIM Repo V3 Certificate", installer)
+        self.assertIn("-LeadSeconds 162", installer)
+
+    def test_normal_certification_uses_production_entry_and_isolates_faults(self):
+        normal = (
+            ROOT
+            / "scripts"
+            / "run_repo_simulation_morning_normal_validation.ps1"
+        ).read_text(encoding="utf-8")
+        recovery = (
+            ROOT
+            / "scripts"
+            / "run_repo_simulation_morning_recovery_validation.ps1"
+        ).read_text(encoding="utf-8-sig")
+        certificate = (
+            ROOT / "scripts" / "run_repo_simulation_certificate.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("gc001_live_daily_90pct_093042.py", normal)
+        self.assertIn('"--environment"', normal)
+        self.assertIn('"simulation"', normal)
+        self.assertIn('"--maximum-principal-yuan"', normal)
+        self.assertIn('"repo_morn_norm"', normal)
+        self.assertNotIn("prepare_repo_simulation_morning_recovery.py", normal)
+        self.assertIn("prepare_repo_simulation_morning_recovery.py", recovery)
+        self.assertIn('"repo_morn_rec"', recovery)
+        self.assertIn("simulation_normal_execution.lock", normal)
+        self.assertIn("simulation_fault_execution.lock", recovery)
+        self.assertIn("--morning-normal-journal", certificate)
+        self.assertIn("--afternoon-normal-journal", certificate)
+        self.assertIn("--morning-recovery-journal", certificate)
 
     def test_readme_places_guided_quick_start_before_command_reference(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -262,19 +345,22 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("#details-init", readme)
         self.assertIn(".\\rr cert stat", readme)
 
-    def test_quick_start_requires_manual_config_review_before_validation(self):
+    def test_quick_start_requires_interactive_config_review_and_validation(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         quick = readme[
             readme.index("## 快速开始（Getting Started）"):
             readme.index("## 命令参考（熟悉流程后使用）")
         ]
-        manual = quick.index("第3步：人工检查并修改策略参数（必做）")
+        manual = quick.index("第3步：交互检查并修改策略参数（必做）")
         validation = quick.index("第4步：应用配置并完成本地验证")
         certification = quick.index("第5步：用模拟账户完成一个交易日认证")
         self.assertLess(manual, validation)
         self.assertLess(validation, certification)
-        self.assertIn("notepad .\\config\\runtime.local.json", quick)
-        self.assertIn("必须由人打开配置文件", quick)
+        self.assertIn(".\\rr cfg", quick)
+        self.assertIn("自动运行", quick)
+        self.assertIn("要求输入`Y`保存", quick)
+        self.assertIn("输入`N`或`Q`取消", quick)
+        self.assertIn("原配置会自动恢复", quick)
         for field in (
             "first_execution_time",
             "first_cash_usage_ratio",
@@ -282,7 +368,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             "second_cash_usage_ratio",
         ):
             self.assertIn(field, quick)
-        self.assertIn("verify.ps1`失败时应先修正配置，不能继续", quick)
+        self.assertIn("完整`verify.ps1`", quick)
         self.assertIn("此时必须停下来，由人逐项核对", quick)
 
     def test_readme_offers_no_git_single_command_install(self):

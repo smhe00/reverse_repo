@@ -30,6 +30,7 @@ from gc001_live_daily_90pct_093042 import (
     _remaining_order_principal,
     _should_reprice,
     _wait_for_retry_slot,
+    _wait_for_submission_snapshot,
 )
 from repo_execution_core import (
     AtomicJournal,
@@ -179,6 +180,63 @@ def _active_controller(
 
 
 class MorningStateMachineExecutionTests(unittest.TestCase):
+    def test_production_snapshot_freezes_ratio_target_without_name_error(self):
+        with TemporaryDirectory() as directory:
+            journal = AtomicJournal(
+                Path(directory) / "morning.json",
+                strategy="test",
+                trade_date=TRADE_DATE,
+            )
+            snapshot = initial_morning_snapshot()
+            journal.load_or_initialize(
+                machine_payload=snapshot_to_payload(snapshot),
+                initial_data={
+                    "environment": "simulation",
+                    "accounted_filled_principal_yuan": 0,
+                },
+            )
+            controller = MorningController(journal, snapshot)
+            for event in (
+                MorningEvent.BEGIN,
+                MorningEvent.PREFLIGHT_OK,
+                MorningEvent.RECOVERY_CLEAR,
+                MorningEvent.TRIGGER,
+            ):
+                controller.apply(event)
+            asset = SimpleNamespace(conservative_available_cash=10_000.0)
+            book = _book(bid1=1.5, bid1_volume=100)
+            now = datetime.now().astimezone()
+            with patch(
+                "gc001_live_daily_90pct_093042.query_all_orders_strict",
+                return_value=[],
+            ), patch(
+                "gc001_live_daily_90pct_093042.query_asset_strict",
+                return_value=asset,
+            ), patch(
+                "gc001_live_daily_90pct_093042.read_quote_books",
+                return_value={"204001.SH": book},
+            ):
+                plan, available_cash = _wait_for_submission_snapshot(
+                    trader=object(),
+                    account=object(),
+                    xtdata=object(),
+                    controller=controller,
+                    target_at=now - timedelta(seconds=1),
+                    quote_deadline=now + timedelta(seconds=5),
+                    maximum_principal_yuan=1_000,
+                    cash_usage_ratio=0.90,
+                    remark_prefix=REMARK_PREFIX_TODAY,
+                    sell_order_type=24,
+                )
+            self.assertIsNotNone(plan)
+            self.assertEqual(plan.principal_yuan, 1_000)
+            self.assertEqual(available_cash, 10_000.0)
+            self.assertEqual(
+                controller.journal.payload["data"]["target_principal_yuan"],
+                1_000,
+            )
+            self.assertEqual(controller.snapshot.state, MorningState.READY)
+
     def test_strategy_name_fits_observed_qmt_field_limit(self):
         self.assertLessEqual(len(STRATEGY_NAME), 23)
 

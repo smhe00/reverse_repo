@@ -834,4 +834,4 @@ Write-Output "reverse_repo初始化完成；实盘任务未启用。"
 if (-not $bindingsReady) {
     Write-Output "账户绑定尚未完成，之后执行 .\bind.ps1 live/simulation。"
 }
-Write-Output "下一步：.\rr stat，然后用一个完整交易日执行 .\rr cert。"
+Write-Output "下一步：.\rr stat，然后用一个交易日执行 .\rr cert。"

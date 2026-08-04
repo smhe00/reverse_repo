@@ -38,15 +38,19 @@ $managedTaskNames = @(
 )
 $stressTaskName = "miniQMT SIM Interface Stress 5Hz"
 $certTaskNames = @(
-    "miniQMT SIM Repo V2 First Recovery",
-    "miniQMT SIM Repo V2 Second",
-    "miniQMT SIM Repo V2 Certificate"
+    "miniQMT SIM Repo V3 Morning Normal",
+    "miniQMT SIM Repo V3 Afternoon Normal",
+    "miniQMT SIM Repo V3 Morning Recovery",
+    "miniQMT SIM Repo V3 Certificate"
 )
 $readOnlyTaskNames = @(
     "miniQMT LIVE READONLY Morning",
     "miniQMT LIVE READONLY Afternoon"
 )
 $obsoleteCertTaskNames = @(
+    "miniQMT SIM Repo V2 First Recovery",
+    "miniQMT SIM Repo V2 Second",
+    "miniQMT SIM Repo V2 Certificate",
     "miniQMT SIM Repo V2 Morning Recovery",
     "miniQMT SIM Repo V2 Afternoon"
 )
@@ -242,6 +246,27 @@ function Format-TaskResult {
 
 function Install-ManagedTasks {
     Initialize-TaskDefinitions
+    $runningTasks = @(
+        foreach ($definition in $taskDefinitions) {
+            $existing = Get-ScheduledTask `
+                -TaskName $definition.Name `
+                -ErrorAction SilentlyContinue
+            if ($null -ne $existing -and $existing.State -eq "Running") {
+                $definition.Name
+            }
+        }
+    )
+    if ($runningTasks.Count -ne 0) {
+        throw (
+            "Cannot install or update running live tasks: " +
+            ($runningTasks -join ", ")
+        )
+    }
+    foreach ($definition in $taskDefinitions) {
+        if (-not (Test-Path -LiteralPath $definition.Wrapper)) {
+            throw "Task wrapper does not exist: $($definition.Wrapper)"
+        }
+    }
     if ($PSCmdlet.ShouldProcess(
         (Get-ReverseRepoLiveEnableManifestPath),
         "Revoke live-enable snapshot before task installation"
@@ -253,9 +278,6 @@ function Install-ManagedTasks {
         [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     )
     foreach ($definition in $taskDefinitions) {
-        if (-not (Test-Path -LiteralPath $definition.Wrapper)) {
-            throw "Task wrapper does not exist: $($definition.Wrapper)"
-        }
         if (-not $PSCmdlet.ShouldProcess(
             $definition.Name,
             "Install or update Windows scheduled task"
@@ -441,6 +463,8 @@ function Set-ManagedTasksEnabled {
     param([Parameter(Mandatory = $true)][bool]$Enabled)
     $manifestCreated = $false
     if ($Enabled) {
+        # Reconcile task definitions while they are disabled before arming.
+        Install-ManagedTasks
         Initialize-TaskDefinitions
         Assert-ManagedTasksMatchConfig
         $activeDefinitions = @(
@@ -1004,12 +1028,13 @@ rr - miniQMT 逆回购自动任务管理工具
 
 【模拟能力认证：实盘前必须完成】
   .\rr cert [YYYY-MM-DD]
-      部署一个完整交易日的三项模拟认证任务。省略日期时自动选择下一个
-      可完整执行的工作日；指定日期只接受YYYY-MM-DD。部署前必须 rr off。
+      部署单日四项模拟认证任务。正式上午/下午执行器验证完整正常路径；
+      当天另一隔离交易窗口用独立journal、锁和委托命名空间验证崩溃恢复。
+      省略日期时自动选择下一个可完整执行的工作日；部署前必须 rr off。
 
   .\rr cert stat | off | del
-      stat查看三项认证任务；off在未运行时撤销后续调度；del删除任务定义。
-      任务正在运行时拒绝强制终止。成功证书由15:31任务自动签发。
+      stat查看四项认证任务；off在未运行时撤销后续调度；del删除任务定义。
+      任务正在运行时拒绝强制终止。当日15:31自动签发证书。
 
   .\rr reset
       撤销并归档当前模拟能力证书。之后必须重新执行 rr cert，才能启用实盘。

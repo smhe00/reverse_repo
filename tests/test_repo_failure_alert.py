@@ -22,6 +22,7 @@ from repo_failure_alert import (  # noqa: E402
     load_optional_smtp_failure_notifier,
     load_smtp_failure_notifier,
     notify_journal_failure,
+    notify_journal_success,
 )
 
 
@@ -118,6 +119,43 @@ class FailureAlertTests(unittest.TestCase):
             self.assertEqual(
                 journal.payload["data"]["failure_alert"]["status"],
                 "failed",
+            )
+
+    def test_success_email_contains_trade_details_and_is_deduplicated(self):
+        with TemporaryDirectory() as directory:
+            journal = self._journal(directory)
+            journal.update_data(
+                success=True,
+                filled_principal_yuan=1000,
+                current_order={
+                    "symbol": "204001.SH",
+                    "order_id": 12345,
+                    "limit_price": 1.5,
+                    "traded_price": 1.5,
+                    "traded_volume": 10,
+                },
+            )
+            notifier = _RecordingNotifier()
+            first = notify_journal_success(
+                notifier,
+                journal,
+                environment="simulation",
+                state="done_filled",
+            )
+            second = notify_journal_success(
+                notifier,
+                journal,
+                environment="simulation",
+                state="done_filled",
+            )
+            self.assertEqual(first.status, "sent")
+            self.assertEqual(second.status, "already_sent")
+            self.assertEqual(len(notifier.alerts), 1)
+            self.assertEqual(notifier.alerts[0].kind, "success")
+            self.assertIn("成交本金=1000元", notifier.alerts[0].reason)
+            self.assertEqual(
+                journal.payload["data"]["success_alert"]["status"],
+                "sent",
             )
 
     def test_smtp_password_is_required_but_never_read_from_config(self):
