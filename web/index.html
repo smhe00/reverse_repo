@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>reverse_repo 本机控制台</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">LOCAL CONTROL · 仅限本机</p>
+        <h1>国债逆回购控制台</h1>
+        <p class="subtitle">把复杂门禁留在程序里，把日常操作放到一张清楚的页面上。</p>
+      </div>
+      <div class="connection" id="connectionBadge">正在连接…</div>
+    </header>
+
+    <div class="notice">
+      <strong>安全边界未改变</strong>
+      <span>页面只调用现有 rr、verify 和参数事务；不会保存账号或密码，也不会自动启用实盘。</span>
+    </div>
+
+    <main class="grid">
+      <section class="panel status-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">01 · 状态</p>
+            <h2>实盘任务</h2>
+          </div>
+          <button class="button secondary" id="refreshButton">刷新状态</button>
+        </div>
+        <div class="summary-row">
+          <div class="metric">
+            <span>第一次</span>
+            <strong id="firstSummary">—</strong>
+          </div>
+          <div class="metric">
+            <span>第二次</span>
+            <strong id="secondSummary">—</strong>
+          </div>
+        </div>
+        <pre class="terminal" id="statusOutput">等待本机状态…</pre>
+      </section>
+
+      <section class="panel config-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">02 · 参数</p>
+            <h2>策略配置</h2>
+          </div>
+          <button class="button ghost" id="defaultsButton" type="button">载入默认值</button>
+        </div>
+        <p class="helper">保存前必须先关闭实盘。后台会自动运行完整 verify；失败或中断将恢复原配置。</p>
+        <form id="configurationForm" autocomplete="off">
+          <div class="form-grid">
+            <label>
+              <span>第一次执行时间</span>
+              <input id="firstExecutionTime" name="first_execution_time" inputmode="numeric" required>
+              <small>09:30–11:28 或 13:00–15:28</small>
+            </label>
+            <label>
+              <span>第一次资金比例</span>
+              <input id="firstCashRatio" name="first_cash_usage_ratio" type="number" min="0" max="1" step="0.01" required>
+              <small>0–1；0表示不启用这一阶段</small>
+            </label>
+            <label>
+              <span>第二次执行时间</span>
+              <input id="secondExecutionTime" name="second_execution_time" inputmode="numeric" required>
+              <small>必须比第一次至少晚5分钟</small>
+            </label>
+            <label>
+              <span>第二次资金比例</span>
+              <input id="secondCashRatio" name="second_cash_usage_ratio" type="number" min="0" max="1" step="0.01" required>
+              <small>0–1；1表示使用全部目标资金</small>
+            </label>
+          </div>
+          <button class="button primary wide" type="submit">验证并保存参数</button>
+        </form>
+      </section>
+
+      <section class="panel actions-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">03 · 操作</p>
+            <h2>常用命令</h2>
+          </div>
+        </div>
+        <div class="action-grid">
+          <button class="action-card safe" data-action="verify">
+            <strong>本地验证</strong><span>运行完整 verify，不连接QMT、不下单</span>
+          </button>
+          <button class="action-card stop" data-action="off">
+            <strong>关闭实盘</strong><span>禁用两个任务并撤销启用快照</span>
+          </button>
+          <button class="action-card live" data-action="on">
+            <strong>启用实盘</strong><span>重新通过证书、配置和签名门禁</span>
+          </button>
+          <button class="action-card neutral" data-action="cert_status">
+            <strong>认证状态</strong><span>只读查看模拟认证任务</span>
+          </button>
+          <button class="action-card neutral" data-action="stress_status">
+            <strong>压力测试状态</strong><span>只读查看一次性压力任务</span>
+          </button>
+          <button class="action-card neutral" data-action="mail_test">
+            <strong>测试邮件</strong><span>使用已保存配置发送测试邮件</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">04 · 输出</p>
+            <h2>操作结果</h2>
+          </div>
+          <button class="button ghost" id="clearLogButton">清空显示</button>
+        </div>
+        <div class="progress hidden" id="progressBar"><span></span></div>
+        <pre class="terminal large" id="operationOutput">尚未执行页面操作。</pre>
+      </section>
+    </main>
+
+    <footer>
+      <span>仅监听 127.0.0.1 · 关闭启动此页面的终端即可停止服务</span>
+      <span>reverse_repo local UI</span>
+    </footer>
+  </div>
+
+  <dialog id="confirmDialog">
+    <form method="dialog">
+      <p class="section-kicker">需要确认</p>
+      <h2 id="confirmTitle">确认操作</h2>
+      <p id="confirmText"></p>
+      <div class="dialog-actions">
+        <button class="button secondary" value="cancel">取消</button>
+        <button class="button danger" id="confirmAccept" value="confirm">确认执行</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

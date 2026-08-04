@@ -1,5 +1,11 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$FirstExecutionTime = "",
+    [string]$FirstCashUsageRatio = "",
+    [string]$SecondExecutionTime = "",
+    [string]$SecondCashUsageRatio = "",
+    [switch]$NonInteractiveConfirmed
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -366,43 +372,87 @@ try {
         [Globalization.CultureInfo]::InvariantCulture
     )
 
-    Write-Output "Live tasks are confirmed Disabled."
-    Write-Output (
-        "Defaults are validated values from runtime.example.json."
+    $providedValues = @(
+        $FirstExecutionTime,
+        $FirstCashUsageRatio,
+        $SecondExecutionTime,
+        $SecondCashUsageRatio
     )
-    $firstTimeResult = Read-ValidatedTime `
-        -Title "[1/4] First execution time" `
-        -Allowed (
-            "09:30:00..11:28:00 or 13:00:00..15:28:00; " +
-            "exact HH:mm:ss"
-        ) `
-        -Current $currentFirstTime `
-        -Default $defaultFirstTimeResult.Text `
-        -Stage "first"
-    $firstTime = $firstTimeResult.Text
-    $firstRatio = Read-ValidatedRatio `
-        -Title "[2/4] First cash usage ratio" `
-        -Allowed "0..1 inclusive" `
-        -Current $currentFirstRatio `
-        -Default $defaultFirstRatioText `
-        -Name "first_cash_usage_ratio"
-    $secondTimeResult = Read-ValidatedTime `
-        -Title "[3/4] Second execution time" `
-        -Allowed (
-            "09:30:00..<11:30:00 or 13:00:00..<15:30:00; " +
-            "at least first+5m; exact HH:mm:ss"
-        ) `
-        -Current $currentSecondTime `
-        -Default $defaultSecondTimeResult.Text `
-        -Stage "second" `
-        -FirstTime $firstTimeResult.Value
-    $secondTime = $secondTimeResult.Text
-    $secondRatio = Read-ValidatedRatio `
-        -Title "[4/4] Second cash usage ratio" `
-        -Allowed "0..1 inclusive" `
-        -Current $currentSecondRatio `
-        -Default $defaultSecondRatioText `
-        -Name "second_cash_usage_ratio"
+    if (
+        -not $NonInteractiveConfirmed `
+        -and @($providedValues | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        }).Count -ne 0
+    ) {
+        throw (
+            "Command-line strategy values require " +
+            "-NonInteractiveConfirmed."
+        )
+    }
+    Write-Output "Live tasks are confirmed Disabled."
+    if ($NonInteractiveConfirmed) {
+        if (@($providedValues | Where-Object {
+            [string]::IsNullOrWhiteSpace($_)
+        }).Count -ne 0) {
+            throw "All four strategy values are required."
+        }
+        $firstTimeResult = ConvertTo-ValidatedTime `
+            -Value $FirstExecutionTime `
+            -Stage "first"
+        $firstTime = $firstTimeResult.Text
+        $firstRatio = ConvertTo-InvariantRatio `
+            -Value $FirstCashUsageRatio `
+            -Name "first_cash_usage_ratio"
+        $secondTimeResult = ConvertTo-ValidatedTime `
+            -Value $SecondExecutionTime `
+            -Stage "second" `
+            -FirstTime $firstTimeResult.Value
+        $secondTime = $secondTimeResult.Text
+        $secondRatio = ConvertTo-InvariantRatio `
+            -Value $SecondCashUsageRatio `
+            -Name "second_cash_usage_ratio"
+        Write-Output (
+            "Using four values explicitly confirmed by the local UI."
+        )
+    }
+    else {
+        Write-Output (
+            "Defaults are validated values from runtime.example.json."
+        )
+        $firstTimeResult = Read-ValidatedTime `
+            -Title "[1/4] First execution time" `
+            -Allowed (
+                "09:30:00..11:28:00 or 13:00:00..15:28:00; " +
+                "exact HH:mm:ss"
+            ) `
+            -Current $currentFirstTime `
+            -Default $defaultFirstTimeResult.Text `
+            -Stage "first"
+        $firstTime = $firstTimeResult.Text
+        $firstRatio = Read-ValidatedRatio `
+            -Title "[2/4] First cash usage ratio" `
+            -Allowed "0..1 inclusive" `
+            -Current $currentFirstRatio `
+            -Default $defaultFirstRatioText `
+            -Name "first_cash_usage_ratio"
+        $secondTimeResult = Read-ValidatedTime `
+            -Title "[3/4] Second execution time" `
+            -Allowed (
+                "09:30:00..<11:30:00 or 13:00:00..<15:30:00; " +
+                "at least first+5m; exact HH:mm:ss"
+            ) `
+            -Current $currentSecondTime `
+            -Default $defaultSecondTimeResult.Text `
+            -Stage "second" `
+            -FirstTime $firstTimeResult.Value
+        $secondTime = $secondTimeResult.Text
+        $secondRatio = Read-ValidatedRatio `
+            -Title "[4/4] Second cash usage ratio" `
+            -Allowed "0..1 inclusive" `
+            -Current $currentSecondRatio `
+            -Default $defaultSecondRatioText `
+            -Name "second_cash_usage_ratio"
+    }
 
     $candidate = $current | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     Set-CurrentAndLegacyProperty `
@@ -459,14 +509,19 @@ try {
         second_cash_usage_ratio = $validatedSecondRatio
     }
     Write-Output (($verifiedDisplay | Format-List | Out-String).TrimEnd())
-    $confirmationPrompt = @(
-        "",
-        "Save the verified parameters?",
-        "  Y = save",
-        "  N or Q = cancel and restore the previous configuration",
-        "Choice"
-    ) -join [Environment]::NewLine
-    $confirmation = Read-Host $confirmationPrompt
+    if ($NonInteractiveConfirmed) {
+        $confirmation = "Y"
+    }
+    else {
+        $confirmationPrompt = @(
+            "",
+            "Save the verified parameters?",
+            "  Y = save",
+            "  N or Q = cancel and restore the previous configuration",
+            "Choice"
+        ) -join [Environment]::NewLine
+        $confirmation = Read-Host $confirmationPrompt
+    }
     if ($confirmation.Trim() -ine "Y") {
         Write-Output "Confirmation declined; restoring the previous configuration."
         return

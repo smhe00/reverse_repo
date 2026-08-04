@@ -222,6 +222,31 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             execution_spec,
         )
 
+    def test_rr_ui_is_a_loopback_only_whitelisted_console(self):
+        command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "scripts" / "run_reverse_repo_web_ui.ps1"
+        ).read_text(encoding="utf-8-sig")
+        server = (
+            ROOT / "scripts" / "reverse_repo_web_ui.py"
+        ).read_text(encoding="utf-8")
+        configurator = (
+            ROOT / "scripts" / "configure_reverse_repo_strategy.ps1"
+        ).read_text(encoding="ascii")
+        self.assertIn('if /I "%~1"=="ui"', command)
+        self.assertIn("run_reverse_repo_web_ui.ps1", command)
+        self.assertIn("reverse_repo_web_ui.py", wrapper)
+        self.assertIn('LOOPBACK_HOST = "127.0.0.1"', server)
+        self.assertNotIn('"0.0.0.0"', server)
+        self.assertIn("ACTION_SPECS", server)
+        self.assertIn("X-RR-Token", server)
+        self.assertIn("Invalid request origin", server)
+        self.assertIn("shell=False", server)
+        self.assertIn("-NonInteractiveConfirmed", server)
+        self.assertIn("[switch]$NonInteractiveConfirmed", configurator)
+        for name in ("index.html", "app.js", "style.css"):
+            self.assertTrue((ROOT / "web" / name).is_file())
+
     def test_rr_clear_removes_only_known_project_tasks(self):
         command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
         manager = (

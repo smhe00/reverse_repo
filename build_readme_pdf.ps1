@@ -22,8 +22,16 @@ foreach ($candidate in $candidates) {
         -not [string]::IsNullOrWhiteSpace($candidate) `
         -and (Test-Path -LiteralPath $candidate -PathType Leaf)
     ) {
-        & $candidate -c "import reportlab, pypdf" 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        $previousErrorPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            & $candidate -c "import reportlab, pypdf" 2>$null
+            $probeExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorPreference
+        }
+        if ($probeExitCode -eq 0) {
             $pythonPath = $candidate
             break
         }

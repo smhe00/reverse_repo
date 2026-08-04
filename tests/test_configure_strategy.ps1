@@ -185,6 +185,50 @@ try {
         -Condition ([double]$restoredDefaults.second_cash_usage_ratio -eq 1.0) `
         -Message "D did not restore the sample second ratio."
 
+    & $configurator `
+        -FirstExecutionTime "10:05:00" `
+        -FirstCashUsageRatio "0.6" `
+        -SecondExecutionTime "15:15:00" `
+        -SecondCashUsageRatio "0.7" `
+        -NonInteractiveConfirmed |
+        Out-Null
+    $nonInteractive = `
+        Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+    Assert-True `
+        -Condition ($nonInteractive.first_execution_time -eq "10:05:00") `
+        -Message "Confirmed non-interactive first time was not saved."
+    Assert-True `
+        -Condition ([double]$nonInteractive.first_cash_usage_ratio -eq 0.6) `
+        -Message "Confirmed non-interactive first ratio was not saved."
+    Assert-True `
+        -Condition ($nonInteractive.second_execution_time -eq "15:15:00") `
+        -Message "Confirmed non-interactive second time was not saved."
+    Assert-True `
+        -Condition ([double]$nonInteractive.second_cash_usage_ratio -eq 0.7) `
+        -Message "Confirmed non-interactive second ratio was not saved."
+
+    $beforeUnconfirmed = [System.IO.File]::ReadAllBytes($configPath)
+    $unconfirmedRejected = $false
+    try {
+        & $configurator `
+            -FirstExecutionTime "10:10:00" `
+            -FirstCashUsageRatio "0.4" `
+            -SecondExecutionTime "15:20:00" `
+            -SecondCashUsageRatio "0.6" |
+            Out-Null
+    }
+    catch {
+        $unconfirmedRejected = $true
+    }
+    Assert-True `
+        -Condition $unconfirmedRejected `
+        -Message "Command-line values were accepted without explicit confirmation."
+    $afterUnconfirmed = [System.IO.File]::ReadAllBytes($configPath)
+    Assert-True `
+        -Condition ([Convert]::ToBase64String($afterUnconfirmed) -eq `
+            [Convert]::ToBase64String($beforeUnconfirmed)) `
+        -Message "Rejected command-line values changed the config bytes."
+
     Write-Output "Transactional strategy configuration tests passed."
 }
 finally {

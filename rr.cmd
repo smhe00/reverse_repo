@@ -12,6 +12,8 @@ if "%~1"=="" (
     echo.
     echo   .\rr cfg
     echo       Edit strategy parameters safely; requires rr off and runs verify.
+    echo   .\rr ui
+    echo       Open the local-only web console for guided status and operations.
     exit /b !RESULT!
 )
 if /I "%~1"=="init" (
@@ -48,6 +50,10 @@ if /I "%~1"=="off" (
 )
 if /I "%~1"=="cfg" (
     "%POWERSHELL%" %PSARGS% "%~dp0scripts\configure_reverse_repo_strategy.ps1"
+    exit /b !ERRORLEVEL!
+)
+if /I "%~1"=="ui" (
+    "%POWERSHELL%" %PSARGS% "%~dp0scripts\run_reverse_repo_web_ui.ps1"
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="mail" (
@@ -96,6 +102,8 @@ if /I "%~1"=="help" (
     echo.
     echo   .\rr cfg
     echo       Edit strategy parameters safely; requires rr off and runs verify.
+    echo   .\rr ui
+    echo       Open the local-only web console for guided status and operations.
     exit /b !RESULT!
 )
 
