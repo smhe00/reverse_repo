@@ -8,6 +8,7 @@ import os
 import platform
 import random
 import re
+import sys
 import time
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time as clock_time, timedelta
@@ -83,6 +84,8 @@ def main() -> int:
     notify_ok.add_argument("--alert-config", required=True)
     notify_ok.add_argument("--journal", required=True)
 
+    check_window = subparsers.add_parser("check-window")
+
     args = parser.parse_args()
     if args.command == "notify-failure":
         from repo_failure_alert import (
@@ -156,27 +159,58 @@ def main() -> int:
         print("Live-channel certification success email was sent.")
         return 0
     if args.command == "preflight":
-        result = live_preflight(
-            qmt_path=Path(args.qmt_path),
-            account_binding=Path(args.account_binding),
-            now=datetime.now().astimezone(),
-        )
+        try:
+            result = live_preflight(
+                qmt_path=Path(args.qmt_path),
+                account_binding=Path(args.account_binding),
+                now=datetime.now().astimezone(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"快速实盘认证只读预检失败：{exc}", file=sys.stderr)
+            return 1
         atomic_write_json(Path(args.output), result)
+        if not result["passed"]:
+            failed = sorted(
+                name
+                for name, ok in (result.get("checks") or {}).items()
+                if not ok
+            )
+            print(
+                "快速实盘认证只读预检失败："
+                + ("、".join(failed) if failed else "预检未通过"),
+                file=sys.stderr,
+            )
+            return 1
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0 if result["passed"] else 1
+        return 0
     if args.command == "certify":
-        result = certify_live_channel(
-            qmt_path=Path(args.qmt_path),
-            account_binding=Path(args.account_binding),
-            journal_path=Path(args.journal),
-            preflight_path=Path(args.preflight),
-        )
+        try:
+            result = certify_live_channel(
+                qmt_path=Path(args.qmt_path),
+                account_binding=Path(args.account_binding),
+                journal_path=Path(args.journal),
+                preflight_path=Path(args.preflight),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"实盘认证签发失败：{exc}", file=sys.stderr)
+            return 1
         result["signature_hmac_sha256"] = sign_payload(
             result, load_signing_key(Path(args.signing_key))
         )
         atomic_write_json(Path(args.output), result)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["passed"] else 1
+    if args.command == "check-window":
+        try:
+            trigger = require_live_window(datetime.now().astimezone())
+        except RuntimeError as exc:
+            print(f"快速实盘认证当前不可用：{exc}", file=sys.stderr)
+            return 1
+        print(
+            "当前处于快速实盘认证窗口；计划触发时间："
+            f"{trigger.isoformat()}"
+        )
+        return 0
 
     try:
         certificate = load_json(Path(args.certificate), "certificate")
@@ -229,9 +263,14 @@ def plan_live_execution(now: datetime) -> tuple[datetime, datetime | None]:
 def require_live_window(now: datetime) -> datetime:
     trigger, unavailable_until = plan_live_execution(now)
     if unavailable_until is not None:
+        weekday = ("一", "二", "三", "四", "五", "六", "日")[
+            unavailable_until.weekday()
+        ]
         raise RuntimeError(
-            "不在快速实盘认证窗口；下个可用时间："
-            + unavailable_until.isoformat()
+            "当前不在快速实盘认证窗口（交易日 09:29:30–11:25:00 "
+            "或 12:59:30–15:25:00）；"
+            f"下个可用时间：{unavailable_until.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"（周{weekday}）"
         )
     return trigger
 

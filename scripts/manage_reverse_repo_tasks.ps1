@@ -642,9 +642,7 @@ function Invoke-LiveChannelCertification {
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
             -Confirmation $LiveCertConfirmation
     }
-    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
-        throw "快速实盘认证失败。"
-    }
+    exit $LASTEXITCODE
 }
 
 function Invoke-LiveChannelCertificationPreflight {
@@ -654,9 +652,7 @@ function Invoke-LiveChannelCertificationPreflight {
     }
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
         -PreflightOnly
-    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
-        throw "Live-channel read-only preflight failed."
-    }
+    exit $LASTEXITCODE
 }
 
 function Get-LiveChannelCertificationStatus {

@@ -4,7 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from repo_execution_core import OrderView  # noqa: E402
 from repo_live_channel_validation import (  # noqa: E402
     plan_live_execution,
+    require_live_window,
     sign_payload,
     validate_live_channel_evidence,
     verify_live_channel_certificate,
@@ -22,6 +23,21 @@ from repo_live_channel_validation import (  # noqa: E402
 
 
 class LiveChannelValidationTests(unittest.TestCase):
+    def test_require_live_window_reports_friendly_next_time(self):
+        cst = timezone(timedelta(hours=8))
+        now = datetime(2026, 8, 5, 19, 0, tzinfo=cst)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"2026-08-06 09:29:30.*周",
+        ):
+            require_live_window(now)
+
+    def test_require_live_window_accepts_morning_window(self):
+        cst = timezone(timedelta(hours=8))
+        now = datetime(2026, 8, 6, 10, 0, tzinfo=cst)
+        trigger = require_live_window(now)
+        self.assertEqual(trigger.date(), now.date())
+
     @staticmethod
     def order(
         *,

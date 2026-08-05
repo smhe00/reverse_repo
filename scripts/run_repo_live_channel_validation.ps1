@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Confirmation = "",
     [switch]$PreflightOnly
@@ -74,11 +74,28 @@ trap {
         $failureReport,
         (New-Object System.Text.UTF8Encoding($false))
     )
-    # A pre-existing certificate is an operational guard, not a trading
-    # fault; do not raise a failure alert for it.
+    # Routine operational guards are not trading faults; do not raise a
+    # failure alert for them (outside the certification window, a pre-existing
+    # certificate, tasks not disabled, a cancelled confirmation, etc.).
+    $guardReasons = @(
+        "*A live-channel certificate already exists*",
+        "*当前不在快速实盘认证窗口*",
+        "*current date is not an exchange trading day*",
+        "*Confirmation did not match*",
+        "*Live task is not Disabled*",
+        "*Live-enable snapshot still exists*",
+        "*Global reverse-repo mutex is busy*"
+    )
+    $isGuardReason = $false
+    foreach ($pattern in $guardReasons) {
+        if ($reason -like $pattern) {
+            $isGuardReason = $true
+            break
+        }
+    }
     if (
         -not $executorStarted `
-        -and $reason -notlike "*A live-channel certificate already exists*"
+        -and -not $isGuardReason
     ) {
         try {
             $mailEnabled = Enable-ReverseRepoOptionalFailureEmail `
@@ -131,6 +148,13 @@ if (Test-Path -LiteralPath $certificatePath -PathType Leaf) {
     throw "A live-channel certificate already exists. Use .\rr cert stat or reset."
 }
 New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
+
+# Fail fast outside the certification window: friendly message only, no full
+# verification dump, no failure email, and no QMT connection.
+& $pythonPath $validatorPath check-window
+if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+    exit 1
+}
 
 Write-Output "Running full local verification; this step does not connect to QMT or submit orders."
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $verifyPath
