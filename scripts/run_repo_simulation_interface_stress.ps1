@@ -57,7 +57,9 @@ $arguments = @(
     "--stop-new-orders", "14:50:00",
     "--trade-interval-minutes", "20"
 )
-$alertEnabled = Enable-ReverseRepoOptionalNotifications
+$alertEnabled = Enable-ReverseRepoOptionalFailureEmail `
+    -ConfigPath $alertConfigPath `
+    -SecretPath $alertSecretPath
 if ($alertEnabled) {
     $arguments += @("--alert-config", $alertConfigPath)
 }
@@ -69,6 +71,6 @@ try {
     $processExitCode = [int]$LASTEXITCODE
 }
 finally {
-    Disable-ReverseRepoOptionalNotifications
+    Disable-ReverseRepoOptionalFailureEmail
 }
 exit $processExitCode

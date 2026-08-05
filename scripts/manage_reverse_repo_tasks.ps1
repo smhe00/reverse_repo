@@ -10,8 +10,6 @@ param(
         "Disable",
         "ConfigureMail",
         "TestMail",
-        "ConfigureWxPusher",
-        "TestWxPusher",
         "LiveCert",
         "LiveCertPreflight",
         "LiveCertStatus",
@@ -775,60 +773,6 @@ function Test-FailureEmail {
     }
 }
 
-
-function Configure-WxPusher {
-    $scriptPath = Join-Path `
-        $PSScriptRoot `
-        "configure_repo_failure_wxpusher.ps1"
-    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
-        throw "WxPusher configuration script is missing: $scriptPath"
-    }
-    & $scriptPath
-}
-
-function Test-WxPusher {
-    $pythonPath = Get-ReverseRepoPython
-    $alertScript = Join-Path $PSScriptRoot "repo_failure_alert.py"
-    $alertConfigPath = Join-Path `
-        $repoRoot `
-        "config\repo_failure_wxpusher.local.json"
-    $alertSecretPath = Join-Path `
-        $repoRoot `
-        "config\repo_failure_wxpusher_secret.local.clixml"
-    foreach ($requiredPath in @(
-        $pythonPath,
-        $alertScript,
-        $alertConfigPath,
-        $alertSecretPath
-    )) {
-        if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
-            throw "WxPusher test file is missing: $requiredPath"
-        }
-    }
-    $secureToken = Import-Clixml -LiteralPath $alertSecretPath
-    if ($secureToken -isnot [securestring]) {
-        throw "WxPusher secret is not a Windows SecureString."
-    }
-    $credential = [pscredential]::new("wxpusher", $secureToken)
-    $env:MINIQMT_ALERT_WXPUSHER_TOKEN = (
-        $credential.GetNetworkCredential().Password
-    )
-    try {
-        & $pythonPath `
-            $alertScript `
-            "--config" `
-            $alertConfigPath `
-            "--test-send"
-        if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
-            throw "WxPusher test failed."
-        }
-    }
-    finally {
-        Remove-Item Env:MINIQMT_ALERT_WXPUSHER_TOKEN `
-            -ErrorAction SilentlyContinue
-    }
-}
-
 # ---------------------------------------------------------------------------
 # Developer-only simulation validation and stress-test orchestration. These
 # functions are reachable only through the .\rr dev command group and never
@@ -1243,24 +1187,14 @@ rr - miniQMT 逆回购自动任务管理工具
   .\rr cert reset
       归档并撤销快速实盘证书及其证据，同时撤销实盘启用快照。
 
-【通知与帮助】
-
-  .\rr wx
-      推荐：配置微信推送通知（WxPusher 极简推送）。扫码一次取得 SPT 令牌，
-      SPT 由 Windows 当前用户加密保存；未配置不会阻止任务启用或策略执行。
-
-  .\rr wt
-      使用已保存的加密配置发送一条测试微信通知，不重新输入令牌。
+【邮件与帮助】
 
   .\rr mail
       可选：配置执行结果/认证通知邮箱。SMTP 密码由 Windows 当前用户加密
-      保存，不写入代码、日志或版本库。
+      保存，不写入代码、日志或版本库；未配置不会阻止任务启用或策略执行。
 
   .\rr mt
       使用已保存的加密配置发送一封测试邮件，不重新输入密码。
-
-  同时配置微信和邮箱时，执行结果、安全停机、认证结果会双通道发送；
-  只配置其中一种时，只走已配置的通道。均未配置时仅记录到本机日志。
 
   .\rr help
       显示本帮助。直接运行 .\rr 也会显示本帮助。
@@ -1343,12 +1277,6 @@ switch ($Action) {
     }
     "TestMail" {
         Test-FailureEmail
-    }
-    "ConfigureWxPusher" {
-        Configure-WxPusher
-    }
-    "TestWxPusher" {
-        Test-WxPusher
     }
     "LiveCert" {
         Invoke-LiveChannelCertification

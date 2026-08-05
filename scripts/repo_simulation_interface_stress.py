@@ -29,7 +29,7 @@ from repo_execution_core import (
     select_bound_account,
 )
 from repo_failure_alert import (
-    load_optional_alert_notifiers,
+    load_optional_smtp_failure_notifier,
     send_standalone_failure,
 )
 
@@ -1509,13 +1509,13 @@ def main() -> int:
 
     notifier = None
     if args.alert_config:
-        notifier, alert_warnings = load_optional_alert_notifiers(
+        notifier, alert_warning = load_optional_smtp_failure_notifier(
             Path(args.alert_config)
         )
-        if alert_warnings:
+        if alert_warning:
             print(
-                "WARNING: optional notifications are disabled: "
-                + "; ".join(alert_warnings)
+                "WARNING: optional failure email is disabled: "
+                f"{alert_warning}"
             )
     try:
         with ExecutionMutex(Path(args.mutex)):

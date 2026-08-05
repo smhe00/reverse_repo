@@ -64,14 +64,6 @@ if /I "%~1"=="mt" (
     "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action TestMail
     exit /b !ERRORLEVEL!
 )
-if /I "%~1"=="wx" (
-    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action ConfigureWxPusher
-    exit /b !ERRORLEVEL!
-)
-if /I "%~1"=="wt" (
-    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action TestWxPusher
-    exit /b !ERRORLEVEL!
-)
 if /I "%~1"=="cert" (
     if /I "%~2"=="stat" (
         "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCertStatus

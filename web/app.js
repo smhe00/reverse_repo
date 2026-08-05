@@ -218,7 +218,6 @@ const actionDetails = {
   live_cert_status: { title: "读取快速认证状态", text: "只读核验证书、journal与当前环境，不连接miniQMT、不下单。", confirmation: null },
   live_cert_reset: { title: "撤销实盘认证", text: "将归档并撤销实盘快速证书及其证据。撤销后如需重新启用实盘，必须重新执行1000元GC001实盘认证（真实买入），请确认后再操作。", confirmation: "REVOKE LIVE CERT", typed: true },
   mail_test: { title: "发送测试邮件", text: "将使用本机已保存的加密SMTP配置发送一封测试邮件。", confirmation: null },
-  wx_test: { title: "发送测试微信通知", text: "将使用本机已保存的加密WxPusher配置发送一条测试通知到你的微信。", confirmation: null },
 };
 
 async function runAction(action) {
