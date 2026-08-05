@@ -42,51 +42,25 @@ if (-not (Test-Path -LiteralPath $alertScript -PathType Leaf)) {
 Write-Output "配置 miniQMT 微信推送通知（WxPusher 极简推送 SPT）。"
 Write-Output ""
 Write-Output "获取 SPT 只需一次，无需注册或创建应用："
-Write-Output "  1. 手机微信扫描 WxPusher 官方 SPT 二维码（https://wxpusher.zjiecode.com/docs/spt.html）；"
-Write-Output "  2. 按提示确认后，会得到一串以 SPT_ 开头的令牌，长按复制它；"
-Write-Output "  3. 在手机微信里把它发给“文件传输助手”，再到电脑微信中复制；"
-Write-Output "     或直接安装 WxPusher Windows 客户端，扫码登录后在客户端里复制；"
-Write-Output "  4. 回到本窗口，在下面右键粘贴（或按 Ctrl+V），令牌会显示为 * 号，直接回车。"
-Write-Output ""
-Write-Output "令牌绑定你的微信，收到的通知只会发给你；无需手敲，粘贴即可。"
+Write-Output "  1. 用微信扫描 WxPusher 官方 SPT 二维码（https://wxpusher.zjiecode.com/docs/spt.html）；"
+Write-Output "  2. 按提示确认后，会得到一串以 SPT_ 开头的令牌；"
+Write-Output "  3. 在下面粘贴该令牌。令牌绑定你的微信，收到的通知只会发给你。"
 Write-Output ""
 Write-Output "SPT 将使用 Windows 当前用户 DPAPI 加密，仅能由当前用户解密。"
 Write-Output ""
 
-$spt = ""
-$confirmed = $false
-for ($attempt = 1; $attempt -le 3; $attempt++) {
-    $secureSpt = Read-Host "WxPusher SPT 令牌（右键粘贴后回车）" -AsSecureString
-    $plainSpt = ConvertTo-PlainText -SecureValue $secureSpt
-    if (
-        [string]::IsNullOrWhiteSpace($plainSpt) `
-        -or -not $plainSpt.Trim().StartsWith("SPT_") `
-        -or $plainSpt.Trim().Length -gt 256 `
-        -or $plainSpt.Contains("`r") `
-        -or $plainSpt.Contains("`n")
-    ) {
-        Write-Warning "SPT 令牌无效：应为以 SPT_ 开头的一串字符。"
-        continue
-    }
-    $spt = $plainSpt.Trim()
-    $tail = if ($spt.Length -ge 6) {
-        $spt.Substring($spt.Length - 6)
-    }
-    else {
-        $spt
-    }
-    $answer = Read-Host "已收到令牌，末尾为 ***$tail，是否正确？[Y/n]"
-    if (
-        [string]::IsNullOrWhiteSpace($answer) `
-        -or $answer.Trim().ToLowerInvariant() -eq "y"
-    ) {
-        $confirmed = $true
-        break
-    }
+$secureSpt = Read-Host "WxPusher SPT 令牌" -AsSecureString
+$plainSpt = ConvertTo-PlainText -SecureValue $secureSpt
+if (
+    [string]::IsNullOrWhiteSpace($plainSpt) `
+    -or -not $plainSpt.Trim().StartsWith("SPT_") `
+    -or $plainSpt.Trim().Length -gt 256 `
+    -or $plainSpt.Contains("`r") `
+    -or $plainSpt.Contains("`n")
+) {
+    throw "SPT 令牌无效：应为以 SPT_ 开头的一串字符。"
 }
-if (-not $confirmed -or [string]::IsNullOrWhiteSpace($spt)) {
-    throw "未获得有效的 WxPusher SPT 令牌。"
-}
+$spt = $plainSpt.Trim()
 
 New-Item -ItemType Directory -Force -Path $configDirectory | Out-Null
 $config = [ordered]@{
