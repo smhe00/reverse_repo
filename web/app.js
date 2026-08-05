@@ -302,7 +302,7 @@ async function saveConfiguration(event) {
   };
   const summary = `第一次：${values.first_execution_time} / ${formatRatio(values.first_cash_usage_ratio)}；第二次：${values.second_execution_time} / ${formatRatio(values.second_cash_usage_ratio)}。必须已经关闭实盘。`;
   if (!(await confirmAction("验证并保存参数", summary))) return;
-  setBusy(true, "正在校验参数并运行完整 verify；请不要关闭窗口…");
+  setBusy(true, "正在校验参数并保存；请不要关闭窗口…");
   try {
     const payload = await api("/api/configuration", {
       method: "POST",

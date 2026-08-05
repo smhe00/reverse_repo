@@ -234,8 +234,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("Get-ReverseRepoLiveEnableManifestPath", configurator)
         self.assertIn("Write-BytesAtomically", configurator)
         self.assertIn("$originalBytes", configurator)
-        self.assertIn("Running full local verification", configurator)
-        self.assertIn("-File $verifyPath", configurator)
+        self.assertIn("本地参数校验通过", configurator)
         self.assertIn("Verified candidate parameters", configurator)
         self.assertIn("Previous runtime configuration restored", configurator)
         self.assertIn('"config\\runtime.example.json"', configurator)
@@ -433,7 +432,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("怎么打开网页控制台", quick)
         self.assertIn("验证并保存参数", quick)
         self.assertIn("LIVE 1000", quick)
-        self.assertIn("自动运行", quick)
+        self.assertIn("本地参数校验", quick)
         self.assertIn("自动恢复原配置", quick)
         self.assertIn("ENABLE LIVE", quick)
         for field in (
@@ -443,7 +442,6 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             "second_cash_usage_ratio",
         ):
             self.assertIn(field, quick)
-        self.assertIn("完整`verify.ps1`", quick)
         self.assertIn("此时必须停下来，由人逐项核对", quick)
         self.assertNotIn(".\\rr cfg", quick)
 

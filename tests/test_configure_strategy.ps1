@@ -121,25 +121,18 @@ try {
             [Convert]::ToBase64String($originalBytes)) `
         -Message "A quiet cancellation changed the runtime configuration."
 
-    Write-Utf8Text -Path $verifyPath -Text "exit 7`r`n"
+    # Parameter saving no longer runs the full local verification; a broken
+    # verify.ps1 must not affect the configurator.
+    Write-Utf8Text -Path $verifyPath -Text "throw 'verify must not run'`r`n"
     Set-PromptAnswers -Answers @(
-        "10:00:00", "0.5", "15:20:00", "0.8"
+        "10:00:00", "0.5", "15:20:00", "0.8", "Y"
     )
-    $verificationFailed = $false
-    try {
-        & $configurator | Out-Null
-    }
-    catch {
-        $verificationFailed = $true
-    }
+    & $configurator | Out-Null
+    $savedWithoutVerify = `
+        Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
     Assert-True `
-        -Condition $verificationFailed `
-        -Message "A failed verify command did not reject the candidate."
-    $afterFailure = [System.IO.File]::ReadAllBytes($configPath)
-    Assert-True `
-        -Condition ([Convert]::ToBase64String($afterFailure) -eq `
-            [Convert]::ToBase64String($originalBytes)) `
-        -Message "Verification failure did not restore the exact config bytes."
+        -Condition ($savedWithoutVerify.first_execution_time -eq "10:00:00") `
+        -Message "Parameter saving unexpectedly depends on verify.ps1."
 
     Write-Utf8Text -Path $verifyPath -Text "exit 0`r`n"
     Set-PromptAnswers -Answers @(
