@@ -495,14 +495,24 @@ try {
     $verifyLogPath = Join-Path `
         $verifyLogDirectory `
         ("strategy_verify_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
-    $verifyOutput = @(
-        & $windowsPowerShell `
-            -NoProfile `
-            -ExecutionPolicy Bypass `
-            -File $verifyPath *>&1 |
-            ForEach-Object { Out-String -InputObject $_ -Width 4096 }
-    )
-    $verifyExit = $LASTEXITCODE
+    # Redirecting native stderr under ErrorActionPreference=Stop turns the
+    # first stderr line (e.g. Python DeprecationWarnings) into a terminating
+    # error. Capture with Continue so the full output still lands in the log.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $verifyOutput = @(
+            & $windowsPowerShell `
+                -NoProfile `
+                -ExecutionPolicy Bypass `
+                -File $verifyPath *>&1 |
+                ForEach-Object { Out-String -InputObject $_ -Width 4096 }
+        )
+        $verifyExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $verifyOutput | Set-Content -LiteralPath $verifyLogPath -Encoding UTF8
     if ($null -eq $verifyExit -or [int]$verifyExit -ne 0) {
         Write-Output "本地验证失败，完整日志：$verifyLogPath"
