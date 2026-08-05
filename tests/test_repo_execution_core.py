@@ -23,8 +23,11 @@ from repo_execution_core import (  # noqa: E402
     QuoteBook,
     QuoteValidationError,
     account_id_fingerprint,
+    assert_order_budget,
     build_book_plan,
     classify_order,
+    floor_principal,
+    floor_principal_after_commission,
     journal_matches_verification,
     load_account_binding,
     normalize_repo_rate,
@@ -56,6 +59,63 @@ def _view(status: int, traded: int = 0, volume: int = 10) -> OrderView:
 
 
 class CoreSafetyTests(unittest.TestCase):
+    def test_floor_principal_after_commission_reserves_ten_thousandth(self):
+        self.assertEqual(floor_principal_after_commission(1_000_000, 1.0), 999_000)
+        self.assertEqual(
+            floor_principal_after_commission(1_000_000, 0.40),
+            399_000,
+        )
+        self.assertEqual(
+            floor_principal_after_commission(2_001_880.80, 0.90),
+            1_801_000,
+        )
+        self.assertEqual(floor_principal_after_commission(10_000, 0.90), 8_000)
+        self.assertEqual(floor_principal_after_commission(0, 1.0), 0)
+        self.assertEqual(floor_principal_after_commission(-1, 1.0), 0)
+        self.assertEqual(floor_principal_after_commission(float("nan"), 1.0), 0)
+        self.assertEqual(floor_principal_after_commission(1_000_000, 1.01), 0)
+        self.assertEqual(floor_principal_after_commission(1_000_000, 0.0), 0)
+        self.assertEqual(
+            floor_principal_after_commission(
+                1_000_000,
+                1.0,
+                commission_rate=0.5,
+            ),
+            666_000,
+        )
+
+    def test_commission_reserve_never_exceeds_cash_budget(self):
+        for cash, ratio in (
+            (100_000, 0.90),
+            (500_000, 1.0),
+            (2_001_880.80, 0.90),
+            (1_234_567.89, 0.75),
+        ):
+            with self.subTest(cash=cash, ratio=ratio):
+                principal = floor_principal_after_commission(cash, ratio)
+                self.assertEqual(principal % 1000, 0)
+                self.assertLessEqual(
+                    principal * (1 + 0.00001),
+                    cash * ratio + 1e-6,
+                )
+                self.assertGreaterEqual(
+                    principal,
+                    floor_principal(cash, ratio) - 1000,
+                )
+
+    def test_order_budget_reserves_commission_fail_closed(self):
+        with self.assertRaises(ExecutionSafetyError):
+            assert_order_budget(
+                principal_yuan=400_000,
+                verified_available_cash_yuan=400_000,
+                maximum_ratio=1.0,
+            )
+        assert_order_budget(
+            principal_yuan=399_000,
+            verified_available_cash_yuan=400_000,
+            maximum_ratio=1.0,
+        )
+
     def test_qmt_strategy_name_rejects_values_the_broker_would_truncate(self):
         self.assertEqual(qmt_strategy_name("repo_morning_v2"), "repo_morning_v2")
         self.assertEqual(qmt_strategy_name("repo_afternoon_v2"), "repo_afternoon_v2")

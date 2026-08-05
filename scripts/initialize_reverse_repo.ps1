@@ -517,11 +517,6 @@ function Install-VirtualEnvironment {
 }
 
 function Get-RunningMiniQmtInstallRoot {
-    param(
-        [Parameter(Mandatory = $true)]
-        [ValidateSet("live", "simulation")]
-        [string]$Environment
-    )
     try {
         $processes = @(
             Get-CimInstance `
@@ -557,11 +552,7 @@ function Get-RunningMiniQmtInstallRoot {
             )) {
                 continue
             }
-            $isSimulation = $installRoot -match "模拟|仿真|simulation"
-            if (
-                ($Environment -eq "simulation" -and $isSimulation) -or
-                ($Environment -eq "live" -and -not $isSimulation)
-            ) {
+            if ($installRoot -notmatch "模拟|仿真|simulation") {
                 $candidates += $installRoot
             }
         }
@@ -571,14 +562,12 @@ function Get-RunningMiniQmtInstallRoot {
     }
     $candidates = @($candidates | Sort-Object -Unique)
     if ($candidates.Count -eq 1) {
-        $label = if ($Environment -eq "live") { "实盘" } else { "模拟" }
-        Write-Host "已从运行中的${label}miniQMT发现安装目录：$($candidates[0])"
+        Write-Host "已从运行中的实盘miniQMT发现安装目录：$($candidates[0])"
         return [string]$candidates[0]
     }
     if ($candidates.Count -gt 1) {
-        $label = if ($Environment -eq "live") { "实盘" } else { "模拟" }
         Write-Warning (
-            "发现多个运行中的${label}miniQMT安装目录，" +
+            "发现多个运行中的实盘miniQMT安装目录，" +
             "为避免误选，将使用配置或默认目录：" +
             ($candidates -join "; ")
         )
@@ -589,9 +578,6 @@ function Get-RunningMiniQmtInstallRoot {
 function Resolve-QmtUserdataPath {
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
-        [Parameter(Mandatory = $true)]
-        [ValidateSet("live", "simulation")]
-        [string]$Environment,
         [Parameter(Mandatory = $true)][string]$DefaultInstallRoot,
         [string]$DetectedInstallRoot = "",
         [string]$Existing = ""
@@ -636,21 +622,14 @@ function Resolve-QmtUserdataPath {
     else {
         $resolved
     }
-    $label = if ($Environment -eq "live") { "实盘" } else { "模拟" }
-    if ($Environment -eq "live" -and $installRoot -match "模拟") {
+    if ($installRoot -match "模拟") {
         throw (
             "实盘miniQMT安装目录不能包含【模拟】，两个路径可能填反了：" +
             $installRoot
         )
     }
-    if ($Environment -eq "simulation" -and $installRoot -notmatch "模拟") {
-        throw (
-            "模拟miniQMT安装目录应包含【模拟】，两个路径可能填反了：" +
-            $installRoot
-        )
-    }
     if (-not (Test-Path -LiteralPath $installRoot -PathType Container)) {
-        throw "未找到${label}miniQMT安装目录，请先完成安装：$installRoot"
+        throw "未找到实盘miniQMT安装目录，请先完成安装：$installRoot"
     }
 
     $userdataPath = Join-Path $installRoot "userdata_mini"
@@ -660,12 +639,12 @@ function Resolve-QmtUserdataPath {
             "登录后由miniQMT创建。"
         )
         $answer = Read-Host (
-            "请启动${label}miniQMT，勾选【独立交易】并登录一次；" +
+            "请启动实盘miniQMT，勾选【独立交易】并登录一次；" +
             "完成后输入Y重试，输入N退出 [Y/n]"
         )
         if ($answer.Trim() -match "^[Nn]$") {
             throw (
-                "${label}miniQMT尚未完成独立交易登录；" +
+                "实盘miniQMT尚未完成独立交易登录；" +
                 "完成后重新运行 .\rr init。"
             )
         }
@@ -684,27 +663,12 @@ function Initialize-RuntimeConfiguration {
     else {
         [string]$existing.live_qmt_path
     }
-    $existingSimulation = if ($null -eq $existing) {
-        ""
-    }
-    else {
-        [string]$existing.simulation_qmt_path
-    }
-    $detectedLiveRoot = Get-RunningMiniQmtInstallRoot -Environment "live"
-    $detectedSimulationRoot = Get-RunningMiniQmtInstallRoot `
-        -Environment "simulation"
+    $detectedLiveRoot = Get-RunningMiniQmtInstallRoot
     $livePath = Resolve-QmtUserdataPath `
         -Prompt "实盘miniQMT安装目录" `
-        -Environment "live" `
         -DefaultInstallRoot "D:\国金证券QMT交易端" `
         -DetectedInstallRoot $detectedLiveRoot `
         -Existing $existingLive
-    $simulationPath = Resolve-QmtUserdataPath `
-        -Prompt "模拟miniQMT安装目录" `
-        -Environment "simulation" `
-        -DefaultInstallRoot "D:\国金QMT交易端模拟" `
-        -DetectedInstallRoot $detectedSimulationRoot `
-        -Existing $existingSimulation
     $firstTime = if ($null -eq $existing) {
         "09:30:42"
     }
@@ -732,7 +696,6 @@ function Initialize-RuntimeConfiguration {
     $config = [ordered]@{
         python_path = ".venv\Scripts\python.exe"
         live_qmt_path = $livePath
-        simulation_qmt_path = $simulationPath
         first_execution_time = $firstTime
         second_execution_time = $secondTime
         first_cash_usage_ratio = $firstRatio
@@ -759,40 +722,28 @@ function Initialize-SigningKey {
 }
 
 function Initialize-AccountBinding {
-    param(
-        [Parameter(Mandatory = $true)]
-        [ValidateSet("live", "simulation")]
-        [string]$Environment
-    )
-    $bindingName = if ($Environment -eq "live") {
-        "repo_live_account_binding.local.json"
-    }
-    else {
-        "repo_simulation_account_binding.local.json"
-    }
+    $bindingName = "repo_live_account_binding.local.json"
     $bindingPath = Join-Path $repoRoot "config\$bindingName"
     if (Test-Path -LiteralPath $bindingPath -PathType Leaf) {
-        Write-Host "$Environment account binding already exists."
+        Write-Host "Live account binding already exists."
         return $true
     }
-    $label = if ($Environment -eq "live") { "实盘" } else { "模拟" }
-    Write-Host "请启动并登录${label}miniQMT；绑定操作只查询账户，不下单。"
+    Write-Host "请启动并登录实盘miniQMT；绑定操作只查询账户，不下单。"
     $answer = Read-Host "准备好后输入Y继续，输入N稍后手工绑定 [Y/n]"
     if (
         -not [string]::IsNullOrWhiteSpace($answer) `
         -and $answer.Trim().ToLowerInvariant() -eq "n"
     ) {
-        Write-Warning "已跳过${label}账户绑定。"
+        Write-Warning "已跳过实盘账户绑定。"
         return $false
     }
     & $windowsPowerShell `
         -NoProfile `
         -ExecutionPolicy Bypass `
-        -File (Join-Path $repoRoot "bind.ps1") `
-        $Environment |
+        -File (Join-Path $repoRoot "bind.ps1") |
         Out-Host
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
-        throw "$Environment account binding failed."
+        throw "Live account binding failed."
     }
     return $true
 }
@@ -814,10 +765,7 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
 
 $bindingsReady = $true
 if (-not $SkipAccountBinding) {
-    $bindingsReady = (
-        (Initialize-AccountBinding -Environment "live") `
-        -and (Initialize-AccountBinding -Environment "simulation")
-    )
+    $bindingsReady = Initialize-AccountBinding
 }
 if (-not $SkipTaskInstall -and $bindingsReady) {
     & $windowsPowerShell `
@@ -832,6 +780,6 @@ if (-not $SkipTaskInstall -and $bindingsReady) {
 
 Write-Output "reverse_repo初始化完成；实盘任务未启用。"
 if (-not $bindingsReady) {
-    Write-Output "账户绑定尚未完成，之后执行 .\bind.ps1 live/simulation。"
+    Write-Output "实盘账户绑定尚未完成，之后执行 .\bind.ps1。"
 }
-Write-Output "下一步：.\rr stat，然后用一个交易日执行 .\rr cert。"
+Write-Output "下一步：.\rr ui 打开网页控制台，完成参数确认、实盘认证和启停；命令行入口仍可用。"

@@ -21,6 +21,8 @@ DEFAULT_SECOND_EXECUTION_TIME = "15:10:00"
 DEFAULT_FIRST_CASH_USAGE_RATIO = 0.90
 DEFAULT_SECOND_CASH_USAGE_RATIO = 1.0
 QMT_STRATEGY_NAME_MAX_CHARACTERS = 23
+# 逆回购佣金按成交本金的十万分之一(0.001%)保留，不下单部分覆盖费用。
+REPO_COMMISSION_RATE = 0.00001
 
 
 def qmt_strategy_name(value: object) -> str:
@@ -502,6 +504,35 @@ def floor_principal(available_cash: float, ratio: float = 1.0) -> int:
     ) * PRINCIPAL_STEP_YUAN
 
 
+def floor_principal_after_commission(
+    available_cash: float,
+    ratio: float = 1.0,
+    *,
+    commission_rate: float = REPO_COMMISSION_RATE,
+) -> int:
+    """Return the largest CNY 1,000 principal whose principal plus the
+    reserve commission stays within the available-cash ratio budget.
+
+    The reserve keeps 本金×(1+手续费率) ≤ 可用资金×比例 so the commission
+    (default 1/100000, i.e. 0.001%) never has to be covered by the lent
+    principal. Returns 0 for non-finite or non-positive inputs.
+    """
+    cash = float(available_cash)
+    fraction = float(ratio)
+    rate = float(commission_rate)
+    if (
+        not math.isfinite(cash)
+        or cash <= 0
+        or not math.isfinite(fraction)
+        or not 0 < fraction <= 1
+        or not math.isfinite(rate)
+        or rate < 0
+    ):
+        return 0
+    ceiling = (cash * fraction) / (1.0 + rate)
+    return int(ceiling // PRINCIPAL_STEP_YUAN) * PRINCIPAL_STEP_YUAN
+
+
 def assert_order_budget(
     *,
     principal_yuan: int,
@@ -509,7 +540,7 @@ def assert_order_budget(
     maximum_ratio: float,
 ) -> None:
     principal = validate_principal(principal_yuan)
-    ceiling = floor_principal(
+    ceiling = floor_principal_after_commission(
         verified_available_cash_yuan,
         maximum_ratio,
     )

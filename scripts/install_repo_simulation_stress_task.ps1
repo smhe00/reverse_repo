@@ -50,7 +50,7 @@ if ($measurementEnd -gt $reservedAfternoonStart.AddMinutes(-3)) {
 if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
     throw "Simulation stress wrapper is missing: $wrapper"
 }
-$simulationQmtPath = Get-ReverseRepoQmtPath -Environment "simulation"
+$simulationQmtPath = Get-ReverseRepoSimulationQmtPath
 if ([string]$simulationQmtPath -notlike "*模拟*") {
     throw (
         "Simulation stress deployment rejected a non-simulation QMT path: " +

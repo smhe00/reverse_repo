@@ -20,24 +20,14 @@ try {
         [char]0x0051, [char]0x004D, [char]0x0054, [char]0x4EA4,
         [char]0x6613, [char]0x7AEF
     )
-    $simulationName = -join @(
-        [char]0x56FD, [char]0x91D1, [char]0x0051, [char]0x004D,
-        [char]0x0054, [char]0x4EA4, [char]0x6613, [char]0x7AEF,
-        [char]0x6A21, [char]0x62DF
-    )
     $expectedLive = "D:\$liveName\userdata_mini"
-    $expectedSimulation = "D:\$simulationName\userdata_mini"
     $validJson = [ordered]@{
         live_qmt_path = $expectedLive
-        simulation_qmt_path = $expectedSimulation
     } | ConvertTo-Json
     [System.IO.File]::WriteAllText($validPath, $validJson, $utf8NoBom)
     $parsed = Read-ReverseRepoJson -Path $validPath
     if ([string]$parsed.live_qmt_path -ne $expectedLive) {
         throw "BOM-less UTF-8 live QMT path was not preserved."
-    }
-    if ([string]$parsed.simulation_qmt_path -ne $expectedSimulation) {
-        throw "BOM-less UTF-8 simulation QMT path was not preserved."
     }
 
     [System.IO.File]::WriteAllText(

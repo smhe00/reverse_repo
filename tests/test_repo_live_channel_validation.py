@@ -24,7 +24,9 @@ from repo_live_channel_validation import (  # noqa: E402
 class LiveChannelValidationTests(unittest.TestCase):
     @staticmethod
     def order(
-        *, remark: str = "repo_live_cert_20260805_0001", traded_volume: int = 10,
+        *,
+        remark: str = "repo_live_cert_20260805_131200_0001",
+        traded_volume: int = 10,
         order_volume: int = 10, status: int = 56,
     ) -> OrderView:
         return OrderView(
@@ -51,7 +53,7 @@ class LiveChannelValidationTests(unittest.TestCase):
                 "live_channel_certification": True,
                 "maximum_principal_yuan": 1000,
                 "cash_usage_ratio": 1.0,
-                "remark_prefix": "repo_live_cert_20260805_",
+                "remark_prefix": "repo_live_cert_20260805_131200_",
                 "filled_principal_yuan": filled,
                 "formal_verification": {
                     "transition_spec_sha256": "transition",
@@ -65,7 +67,9 @@ class LiveChannelValidationTests(unittest.TestCase):
             "history": [
                 {
                     "event": "intent_persisted",
-                    "details": {"remark": "repo_live_cert_20260805_0001"},
+                    "details": {
+                        "remark": "repo_live_cert_20260805_131200_0001"
+                    },
                 }
             ],
         }

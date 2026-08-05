@@ -78,7 +78,6 @@ try {
 {
   "python_path": ".venv\\Scripts\\python.exe",
   "live_qmt_path": "D:\\LiveQMT",
-  "simulation_qmt_path": "D:\\SimQMT",
   "first_execution_time": "09:30:42",
   "second_execution_time": "15:10:00",
   "first_cash_usage_ratio": 0.9,
@@ -90,7 +89,6 @@ try {
 {
   "python_path": ".venv\\Scripts\\python.exe",
   "live_qmt_path": "D:\\LiveQMT",
-  "simulation_qmt_path": "D:\\SimQMT",
   "first_execution_time": "09:30:42",
   "second_execution_time": "15:10:00",
   "first_cash_usage_ratio": 0.9,

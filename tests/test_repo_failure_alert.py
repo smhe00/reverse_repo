@@ -19,8 +19,11 @@ from repo_failure_alert import (  # noqa: E402
     ALERT_PASSWORD_ENV,
     AlertConfigurationError,
     FailureAlert,
+    SmtpAlertConfig,
+    _build_message,
     load_optional_smtp_failure_notifier,
     load_smtp_failure_notifier,
+    notify_journal_certification,
     notify_journal_failure,
     notify_journal_success,
 )
@@ -45,6 +48,18 @@ class _FailingNotifier:
 
 
 class FailureAlertTests(unittest.TestCase):
+    def _config(self) -> SmtpAlertConfig:
+        return SmtpAlertConfig(
+            to_addresses=("operator@example.com",),
+            from_address="sender@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=587,
+            smtp_security="starttls",
+            smtp_username="sender@example.com",
+            timeout_seconds=10.0,
+            attempts=1,
+        )
+
     def test_optional_email_missing_or_invalid_never_raises(self):
         with TemporaryDirectory() as directory:
             missing = Path(directory) / "missing.json"
@@ -157,6 +172,79 @@ class FailureAlertTests(unittest.TestCase):
                 journal.payload["data"]["success_alert"]["status"],
                 "sent",
             )
+
+    def test_certification_success_email_is_clear_and_structured(self):
+        with TemporaryDirectory() as directory:
+            journal = self._journal(directory)
+            journal.update_data(
+                success=True,
+                filled_principal_yuan=1000,
+                current_order={
+                    "symbol": "204001.SH",
+                    "order_id": 12345,
+                    "limit_price": 1.5,
+                    "traded_price": 1.5,
+                    "traded_volume": 10,
+                },
+            )
+            notifier = _RecordingNotifier()
+            delivery = notify_journal_certification(
+                notifier,
+                journal,
+                environment="live",
+                state="certificate_issued",
+                passed=True,
+            )
+            self.assertEqual(delivery.status, "sent")
+            alert = notifier.alerts[0]
+            self.assertEqual(alert.kind, "success")
+            self.assertTrue(alert.certification)
+            message = _build_message(self._config(), alert)
+            self.assertIn("[实盘认证成功]", message["Subject"])
+            self.assertIn("实盘通道认证已通过", message.get_content())
+            self.assertIn("成交本金（元）：1000", message.get_content())
+            self.assertIn("rr on", message.get_content())
+
+    def test_certification_failure_email_is_clear(self):
+        with TemporaryDirectory() as directory:
+            journal = self._journal(directory)
+            notifier = _RecordingNotifier()
+            delivery = notify_journal_certification(
+                notifier,
+                journal,
+                environment="live",
+                state="certification_failed",
+                passed=False,
+                reason="cannot reach a certifiable state",
+            )
+            self.assertEqual(delivery.status, "sent")
+            alert = notifier.alerts[0]
+            self.assertEqual(alert.kind, "failure")
+            self.assertTrue(alert.certification)
+            message = _build_message(self._config(), alert)
+            self.assertIn("[实盘认证失败]", message["Subject"])
+            self.assertIn("未通过", message.get_content())
+            self.assertIn(
+                "cannot reach a certifiable state",
+                message.get_content(),
+            )
+            self.assertIn("rr cert", message.get_content())
+
+    def test_configuration_test_email_is_clearly_marked(self):
+        alert = FailureAlert(
+            strategy="email_alert_configuration_test",
+            trade_date="2026-08-05",
+            environment="configuration_test",
+            state="test",
+            event="test",
+            reason="no trading error occurred",
+            unresolved_order=False,
+            journal_path="not-applicable",
+            occurred_at="2026-08-05T10:00:00+08:00",
+        )
+        message = _build_message(self._config(), alert)
+        self.assertIn("[测试邮件]", message["Subject"])
+        self.assertIn("无需任何处理", message.get_content())
 
     def test_smtp_password_is_required_but_never_read_from_config(self):
         with TemporaryDirectory() as directory:

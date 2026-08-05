@@ -24,6 +24,7 @@ from gc001_live_daily_90pct_093042 import (
     _parse_cash_usage_ratio,
     _parse_morning_execution_time,
     _parse_remark_root,
+    _run_morning_command,
     _reconcile_terminal,
     _recover_morning_order,
     _recover_unknown_submission,
@@ -283,6 +284,32 @@ class MorningStateMachineExecutionTests(unittest.TestCase):
             ):
                 _parse_cash_usage_ratio(value)
 
+    def test_live_certification_requires_unique_per_attempt_prefix(self):
+        today = datetime.now().astimezone().date()
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = argparse.Namespace(
+                qmt_path=str(root),
+                account_binding=str(root / "binding.json"),
+                environment="live",
+                trade_date=today.isoformat(),
+                journal=str(root / "journal.json"),
+                mutex=str(root / "mutex.lock"),
+                execution_time=clock_time(13, 0, 0),
+                cash_usage_ratio=1.0,
+                remark_root="repo_live_cert",
+                remark_prefix="repo_live_cert_20260805_",
+                alert_config="",
+                maximum_principal_yuan=1000,
+                live_channel_certification=True,
+                validate_only=False,
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                "per-attempt remark prefix",
+            ):
+                _run_morning_command(args, {}, None)
+
     def test_sizing_preserves_ninety_percent_contract(self):
         self.assertEqual(CASH_USAGE_RATIO, 0.90)
         self.assertEqual(floor_principal(2_001_880.80, 0.90), 1_801_000)
@@ -370,7 +397,7 @@ class MorningStateMachineExecutionTests(unittest.TestCase):
             reported_cash_yuan=500_000,
         )
         self.assertEqual(effective_cash, 500_000)
-        self.assertEqual(manually_reduced, 500_000)
+        self.assertEqual(manually_reduced, 499_000)
 
     def test_matching_callback_wakes_poll_but_foreign_callback_does_not(self):
         signal = BrokerUpdateSignal(

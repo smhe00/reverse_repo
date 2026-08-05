@@ -10,7 +10,7 @@ $repoRoot = Get-ReverseRepoRoot
 Set-Location -LiteralPath $repoRoot
 
 $pythonPath = Get-ReverseRepoPython
-$qmtPath = Get-ReverseRepoQmtPath -Environment "simulation"
+$qmtPath = Get-ReverseRepoSimulationQmtPath
 $null = Get-ReverseRepoMorningExecutionTime
 $null = Get-ReverseRepoSecondExecutionTime
 $morningExecutionTime = $RecoveryExecutionTime

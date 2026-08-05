@@ -21,6 +21,7 @@ const elements = {
   dialogAccept: document.querySelector("#confirmAccept"),
   dialogPhraseGroup: document.querySelector("#confirmPhraseGroup"),
   dialogPhrase: document.querySelector("#confirmPhrase"),
+  dialogPhraseHint: document.querySelector("#confirmPhraseHint"),
 };
 
 let token = "";
@@ -188,9 +189,15 @@ function confirmAction(title, text, requiredPhrase = null) {
   elements.dialogTitle.textContent = title;
   elements.dialogText.textContent = text;
   elements.dialogPhrase.value = "";
-  elements.dialogPhraseGroup.classList.toggle("hidden", !requiredPhrase);
-  if (requiredPhrase) {
+  elements.dialogPhrase.placeholder = "";
+  elements.dialogPhraseHint.textContent = "";
+  const needsTypedPhrase = Boolean(requiredPhrase);
+  elements.dialogPhraseGroup.classList.toggle("hidden", !needsTypedPhrase);
+  if (needsTypedPhrase) {
     elements.dialogPhrase.placeholder = requiredPhrase;
+    elements.dialogPhraseHint.textContent =
+      `请输入：${requiredPhrase}（区分大小写）`;
+    elements.dialogPhrase.focus();
   }
   elements.dialog.showModal();
   return new Promise((resolve) => {
@@ -205,13 +212,11 @@ function confirmAction(title, text, requiredPhrase = null) {
 }
 
 const actionDetails = {
-  verify: { title: "运行本地验证", text: "将运行完整 verify。它不连接miniQMT，也不会下单。", confirmation: null },
-  off: { title: "关闭实盘任务", text: "两个实盘任务将被禁用，启用快照会撤销。之后不会自动恢复。", confirmation: "DISABLE LIVE" },
   on: { title: "启用实盘任务", text: "系统将重新核验证书、账户绑定、执行源码和四项参数；通过后，资金比例大于0的任务将进入Ready。", confirmation: "ENABLE LIVE" },
-  cert_status: { title: "读取认证状态", text: "只读查看模拟认证任务，不创建或删除任务。", confirmation: null },
+  off: { title: "关闭实盘任务", text: "两个实盘任务将被禁用，启用快照会撤销。之后不会自动恢复。", confirmation: "DISABLE LIVE" },
   live_cert: { title: "快速实盘认证（固定1000元）", text: "这会提交真实GC001逆回购，累计成交本金硬上限1000元。请先确认实盘任务已关闭；成功后仍不会自动启用。", confirmation: "LIVE 1000", typed: true },
   live_cert_status: { title: "读取快速认证状态", text: "只读核验证书、journal与当前环境，不连接miniQMT、不下单。", confirmation: null },
-  stress_status: { title: "读取压力状态", text: "只读查看压力测试任务，不创建或删除任务。", confirmation: null },
+  live_cert_reset: { title: "撤销实盘认证", text: "将归档并撤销实盘快速证书及其证据。撤销后如需重新启用实盘，必须重新执行1000元GC001实盘认证（真实买入），请确认后再操作。", confirmation: "REVOKE LIVE CERT", typed: true },
   mail_test: { title: "发送测试邮件", text: "将使用本机已保存的加密SMTP配置发送一封测试邮件。", confirmation: null },
 };
 
@@ -229,7 +234,13 @@ async function runAction(action) {
       if (!preflight.ok) throw new Error(preflight.output || "只读预检失败");
       elements.operationOutput.textContent = preflight.output;
     } catch (error) {
-      elements.operationOutput.textContent = `只读预检失败；没有下单\n${String(error.message || error)}`;
+      const detail = String(error.message || error);
+      if (detail.includes("A live-channel certificate already exists")) {
+        elements.operationOutput.textContent =
+          "已存在实盘认证证书。如需重新认证，请先点击“撤销实盘认证”并输入 REVOKE LIVE CERT，然后再次执行认证。";
+      } else {
+        elements.operationOutput.textContent = `只读预检失败；没有下单\n${detail}`;
+      }
       setBusy(false);
       return;
     }

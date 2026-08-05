@@ -9,7 +9,7 @@ import smtplib
 import ssl
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from email.message import EmailMessage
 from email.utils import parseaddr
@@ -57,6 +57,8 @@ class FailureAlert:
     error_type: str | None = None
     error_message: str | None = None
     kind: str = "failure"
+    certification: bool = False
+    details: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def key(self) -> str:
@@ -68,6 +70,7 @@ class FailureAlert:
             "reason": self.reason,
             "unresolved_order": self.unresolved_order,
             "kind": self.kind,
+            "certification": self.certification,
         }
         payload = json.dumps(
             material,
@@ -284,7 +287,15 @@ def notify_journal_success(
         )
         or 0
     )
-    details = (
+    detail_fields = {
+        "成交本金（元）": filled,
+        "证券": order.get("symbol", ""),
+        "委托号": order.get("order_id", ""),
+        "委托利率（%）": order.get("limit_price", ""),
+        "成交均价（%）": order.get("traded_price", ""),
+        "成交数量": order.get("traded_volume", ""),
+    }
+    reason = (
         f"成交本金={filled}元；证券={order.get('symbol', '')}；"
         f"委托号={order.get('order_id', '')}；"
         f"委托利率={order.get('limit_price', '')}%；"
@@ -297,17 +308,65 @@ def notify_journal_success(
         environment=str(environment),
         state=str(state),
         event="execution_completed",
-        reason=details,
+        reason=reason,
         unresolved_order=False,
         journal_path=str(Path(journal.path).resolve()),
         occurred_at=datetime.now().astimezone().isoformat(),
         kind="success",
+        details=detail_fields,
     )
     return _deliver_journal_alert(
         notifier,
         journal,
         alert,
         data_field="success_alert",
+    )
+
+
+def notify_journal_certification(
+    notifier: FailureNotifier | None,
+    journal: JournalLike,
+    *,
+    environment: str,
+    state: str,
+    passed: bool,
+    reason: str = "",
+) -> AlertDelivery:
+    data = journal.payload.get("data") or {}
+    order = data.get("current_order") or data.get("last_terminal_order") or {}
+    if not isinstance(order, Mapping):
+        order = {}
+    filled = int(data.get("filled_principal_yuan", 0) or 0)
+    detail_fields = {
+        "成交本金（元）": filled,
+        "证券": order.get("symbol", ""),
+        "委托号": order.get("order_id", ""),
+        "委托利率（%）": order.get("limit_price", ""),
+        "成交均价（%）": order.get("traded_price", ""),
+        "成交数量": order.get("traded_volume", ""),
+    }
+    alert = FailureAlert(
+        strategy=str(journal.strategy),
+        trade_date=str(journal.trade_date),
+        environment=str(environment),
+        state=str(state),
+        event=("certification_passed" if passed else "certification_failed"),
+        reason=_bounded_text(
+            reason or "实盘通道认证未通过。",
+            2_000,
+        ),
+        unresolved_order=False,
+        journal_path=str(Path(journal.path).resolve()),
+        occurred_at=datetime.now().astimezone().isoformat(),
+        kind=("success" if passed else "failure"),
+        certification=True,
+        details=detail_fields if passed else {},
+    )
+    return _deliver_journal_alert(
+        notifier,
+        journal,
+        alert,
+        data_field="certification_alert",
     )
 
 
@@ -401,49 +460,111 @@ def _build_message(
     alert: FailureAlert,
 ) -> EmailMessage:
     successful = alert.kind == "success"
-    subject = (
-        ("[miniQMT][执行成功]" if successful else "[miniQMT][需人工检查]")
-        + f"[{alert.environment.upper()}] {alert.strategy} "
-        f"{alert.trade_date}"
+    environment_label = (
+        "实盘" if alert.environment == "live" else str(alert.environment)
     )
+    is_test = alert.strategy == "email_alert_configuration_test"
+    if is_test:
+        subject = (
+            f"[miniQMT][测试邮件] {alert.trade_date} "
+            "邮件配置测试"
+        )
+    elif alert.certification and successful:
+        subject = (
+            f"[miniQMT][实盘认证成功][{alert.environment.upper()}] "
+            f"{alert.trade_date} GC001 1000元"
+        )
+    elif alert.certification:
+        subject = (
+            f"[miniQMT][实盘认证失败][{alert.environment.upper()}] "
+            f"{alert.trade_date}"
+        )
+    elif successful:
+        subject = (
+            f"[miniQMT][执行成功][{alert.environment.upper()}] "
+            f"{alert.trade_date} 国债逆回购"
+        )
+    else:
+        subject = (
+            f"[miniQMT][需人工检查][{alert.environment.upper()}] "
+            f"{alert.trade_date} 国债逆回购"
+        )
     message = EmailMessage()
     message["From"] = config.from_address
     message["To"] = ", ".join(config.to_addresses)
     message["Subject"] = _clean_header(subject)
-    lines = [
-        (
-            "miniQMT 逆回购执行已成功完成。"
-            if successful
-            else "miniQMT 逆回购执行器已安全停止，需要人工检查。"
-        ),
-        "",
-        f"策略：{alert.strategy}",
-        f"交易日：{alert.trade_date}",
-        f"环境：{alert.environment}",
-        f"状态：{alert.state}",
-        f"事件：{alert.event}",
-        f"原因：{alert.reason}",
-        (
+    details = dict(alert.details or {})
+    lines: list[str] = []
+    if is_test:
+        lines.append("这是一封邮件配置测试，无需任何处理。")
+        lines.append("")
+        lines.append(f"测试时间：{alert.occurred_at}")
+        lines.append(f"策略：{alert.strategy}")
+    elif alert.certification:
+        if successful:
+            lines.append("miniQMT 实盘通道认证已通过。")
+            lines.append("")
+            lines.append(f"策略：{alert.strategy}")
+            lines.append(f"交易日：{alert.trade_date}")
+            lines.append(f"环境：{environment_label}")
+            lines.append("证书状态：已签发（本机HMAC签名）")
+        else:
+            lines.append("miniQMT 实盘通道认证未通过，需要人工检查。")
+            lines.append("")
+            lines.append(f"策略：{alert.strategy}")
+            lines.append(f"交易日：{alert.trade_date}")
+            lines.append(f"环境：{environment_label}")
+            lines.append(f"原因：{alert.reason}")
+            lines.append("")
+            lines.append("安全约束：未自动补单、追价或扩大金额。")
+    elif successful:
+        lines.append("miniQMT 国债逆回购执行已成功完成。")
+        lines.append("")
+        lines.append(f"策略：{alert.strategy}")
+        lines.append(f"交易日：{alert.trade_date}")
+        lines.append(f"环境：{environment_label}")
+        lines.append(f"状态：{alert.state}")
+    else:
+        lines.append("miniQMT 逆回购执行器已安全停止，需要人工检查。")
+        lines.append("")
+        lines.append(f"策略：{alert.strategy}")
+        lines.append(f"交易日：{alert.trade_date}")
+        lines.append(f"环境：{environment_label}")
+        lines.append(f"状态：{alert.state}")
+        lines.append(f"事件：{alert.event}")
+        lines.append(f"原因：{alert.reason}")
+        lines.append(
             "是否存在未决委托："
-            + ("是，请先到券商端查单" if alert.unresolved_order else "否/未检测到")
-        ),
-        f"发生时间：{alert.occurred_at}",
-        f"本机日志：{alert.journal_path}",
-    ]
-    if alert.error_type:
-        lines.extend(
-            [
-                f"异常类型：{alert.error_type}",
-                f"异常信息：{alert.error_message or ''}",
-            ]
+            + (
+                "是，请先到券商端查单"
+                if alert.unresolved_order
+                else "否"
+            )
         )
-    if not successful:
-        lines.extend(
-            [
-                "",
-                "安全约束：程序没有自动补单、追价、改价或扩大金额。",
-            ]
-        )
+        if alert.error_type:
+            lines.append(f"异常类型：{alert.error_type}")
+            lines.append(f"异常信息：{alert.error_message or ''}")
+        lines.append("")
+        lines.append("安全约束：程序未自动补单、追价、改价或扩大金额。")
+
+    if details:
+        lines.append("")
+        lines.append("成交明细：")
+        for name, value in details.items():
+            lines.append(f"  {name}：{value}")
+    elif successful and not is_test:
+        lines.append("")
+        lines.append(f"结果：{alert.reason}")
+
+    lines.append("")
+    lines.append(f"发生时间：{alert.occurred_at}")
+    lines.append(f"本机日志：{alert.journal_path}")
+    if alert.certification and successful:
+        lines.append("")
+        lines.append("后续：实盘任务仍为 Disabled；人工复核后执行 rr on。")
+    elif alert.certification and not successful:
+        lines.append("")
+        lines.append("后续：修复问题后重新执行 rr cert。")
     message.set_content("\n".join(lines), charset="utf-8")
     return message
 

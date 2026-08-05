@@ -86,29 +86,29 @@
           </div>
         </div>
         <div class="action-grid">
-          <button class="action-card safe" data-action="verify">
-            <strong>本地验证</strong><span>运行完整 verify，不连接QMT、不下单</span>
+          <button class="action-card live" data-action="on">
+            <strong>启用实盘</strong><span>重新通过证书、配置和签名门禁</span>
+            <code class="cli-hint">rr on</code>
           </button>
           <button class="action-card stop" data-action="off">
             <strong>关闭实盘</strong><span>禁用两个任务并撤销启用快照</span>
-          </button>
-          <button class="action-card live" data-action="on">
-            <strong>启用实盘</strong><span>重新通过证书、配置和签名门禁</span>
-          </button>
-          <button class="action-card neutral" data-action="cert_status">
-            <strong>认证状态</strong><span>只读查看模拟认证任务</span>
+            <code class="cli-hint">rr off</code>
           </button>
           <button class="action-card live" data-action="live_cert">
             <strong>快速实盘认证（固定1000元）</strong><span>真实GC001通道；必须输入 LIVE 1000</span>
+            <code class="cli-hint">rr cert</code>
           </button>
           <button class="action-card neutral" data-action="live_cert_status">
             <strong>快速认证状态</strong><span>只读核验证书与证据，不连接QMT</span>
+            <code class="cli-hint">rr cert stat</code>
           </button>
-          <button class="action-card neutral" data-action="stress_status">
-            <strong>压力测试状态</strong><span>只读查看一次性压力任务</span>
+          <button class="action-card danger" data-action="live_cert_reset">
+            <strong>撤销实盘认证</strong><span>归档并撤销证书；重新认证需真实1000元GC001</span>
+            <code class="cli-hint">rr cert reset</code>
           </button>
           <button class="action-card neutral" data-action="mail_test">
             <strong>测试邮件</strong><span>使用已保存配置发送测试邮件</span>
+            <code class="cli-hint">rr mt</code>
           </button>
         </div>
       </section>
@@ -140,6 +140,7 @@
       <label class="confirm-phrase hidden" id="confirmPhraseGroup">
         <span>请输入确认文字</span>
         <input id="confirmPhrase" autocomplete="off" spellcheck="false">
+        <small id="confirmPhraseHint"></small>
       </label>
       <div class="dialog-actions">
         <button class="button secondary" value="cancel">取消</button>

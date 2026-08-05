@@ -131,27 +131,36 @@ function Get-ReverseRepoPython {
     throw "No usable Python executable was found for reverse_repo."
 }
 
-function Get-ReverseRepoQmtPath {
-    param(
-        [Parameter(Mandatory = $true)]
-        [ValidateSet("live", "simulation")]
-        [string]$Environment
-    )
-    $override = if ($Environment -eq "live") {
-        $env:REVERSE_REPO_LIVE_QMT_PATH
-    }
-    else {
-        $env:REVERSE_REPO_SIMULATION_QMT_PATH
-    }
+function Get-ReverseRepoLiveQmtPath {
+    $override = $env:REVERSE_REPO_LIVE_QMT_PATH
     if (-not [string]::IsNullOrWhiteSpace($override)) {
         return Resolve-ReverseRepoConfiguredPath -Value $override
     }
     $config = Get-ReverseRepoRuntimeConfig
-    $property = "${Environment}_qmt_path"
-    $value = [string]$config.$property
+    $value = [string]$config.live_qmt_path
     $path = Resolve-ReverseRepoConfiguredPath -Value $value
     if (-not (Test-Path -LiteralPath $path -PathType Container)) {
-        throw "Configured $Environment QMT path does not exist: $path"
+        throw "Configured live QMT path does not exist: $path"
+    }
+    return $path
+}
+
+function Get-ReverseRepoSimulationQmtPath {
+    $override = $env:REVERSE_REPO_SIMULATION_QMT_PATH
+    if (-not [string]::IsNullOrWhiteSpace($override)) {
+        return Resolve-ReverseRepoConfiguredPath -Value $override
+    }
+    $config = Get-ReverseRepoRuntimeConfig
+    $value = [string]$config.simulation_qmt_path
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        throw (
+            "Developer simulation validation requires simulation_qmt_path " +
+            "in config\runtime.local.json. Run .\rr dev bind first."
+        )
+    }
+    $path = Resolve-ReverseRepoConfiguredPath -Value $value
+    if (-not (Test-Path -LiteralPath $path -PathType Container)) {
+        throw "Configured simulation QMT path does not exist: $path"
     }
     return $path
 }
@@ -386,7 +395,7 @@ function Invoke-ReverseRepoLiveEnableManifest {
         "config\runtime.local.json"
     $certificatePath = Join-Path `
         $script:ReverseRepoRoot `
-        "reports\gc001_intraday\simulation_validation\latest.json"
+        "reports\gc001_intraday\live_channel_validation\latest.json"
     $signingKeyPath = Join-Path `
         $script:ReverseRepoRoot `
         "config\repo_release_gate_secret.local.json"
@@ -407,7 +416,7 @@ function Invoke-ReverseRepoLiveEnableManifest {
         $Mode `
         "--strategy-config" `
         $strategyConfigPath `
-        "--simulation-certificate" `
+        "--live-channel-certificate" `
         $certificatePath `
         "--signing-key" `
         $signingKeyPath `

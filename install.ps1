@@ -4,7 +4,8 @@ param(
     [string]$RepositoryBase = (
         "https://gitee.com/smhe/reverse_repo/raw/main"
     ),
-    [switch]$SkipInitialize
+    [switch]$SkipInitialize,
+    [switch]$SkipUi
 )
 
 Set-StrictMode -Version Latest
@@ -177,4 +178,15 @@ try {
 }
 finally {
     Pop-Location
+}
+
+if (-not $SkipUi) {
+    Write-Output "Opening the local web console..."
+    & (Join-Path $destinationPath "rr.cmd") ui
+    if ($null -ne $LASTEXITCODE -and [int]$LASTEXITCODE -ne 0) {
+        Write-Warning (
+            "Local web console exited with code $LASTEXITCODE; " +
+            "you can run .\rr ui later."
+        )
+    }
 }

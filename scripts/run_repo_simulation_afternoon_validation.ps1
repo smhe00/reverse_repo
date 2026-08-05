@@ -5,7 +5,7 @@ $repoRoot = Get-ReverseRepoRoot
 Set-Location -LiteralPath $repoRoot
 
 $pythonPath = Get-ReverseRepoPython
-$qmtPath = Get-ReverseRepoQmtPath -Environment "simulation"
+$qmtPath = Get-ReverseRepoSimulationQmtPath
 $validationFirstExecutionTime = if ($args.Count -ge 1) { $args[0] } else { "" }
 $validationSecondExecutionTime = if ($args.Count -ge 2) { $args[1] } else { "" }
 $afternoonExecution = if ([string]::IsNullOrWhiteSpace(

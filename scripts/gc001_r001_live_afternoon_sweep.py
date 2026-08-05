@@ -32,7 +32,7 @@ from repo_execution_core import (
     assert_order_budget,
     build_book_plan,
     find_unique_order_by_remark,
-    floor_principal,
+    floor_principal_after_commission,
     is_first_execution_time,
     is_exchange_trading_day,
     journal_matches_verification,
@@ -638,6 +638,16 @@ def run_afternoon(
             )
             if controller.snapshot.state in AFTERNOON_TERMINAL_STATES:
                 return _terminal_exit_code(controller.snapshot.state)
+            if _durable_afternoon_remaining(
+                journal.payload.get("data") or {}
+            ) == 0:
+                return _finish_at_hard_stop(
+                    trader=trader,
+                    account=account,
+                    controller=controller,
+                    maximum_principal_yuan=maximum_principal_yuan,
+                    cash_usage_ratio=cash_usage_ratio,
+                )
 
         _wait_until(execution_at)
         if controller.snapshot.state is AfternoonState.WAIT_WINDOW:
@@ -649,6 +659,16 @@ def run_afternoon(
             if resume_at is not None:
                 _wait_until(resume_at)
                 continue
+            if _durable_afternoon_remaining(
+                journal.payload.get("data") or {}
+            ) == 0:
+                return _finish_at_hard_stop(
+                    trader=trader,
+                    account=account,
+                    controller=controller,
+                    maximum_principal_yuan=maximum_principal_yuan,
+                    cash_usage_ratio=cash_usage_ratio,
+                )
             if controller.snapshot.state is AfternoonState.BACKOFF:
                 data = dict(journal.payload.get("data") or {})
                 rejected = int(
@@ -965,7 +985,10 @@ def _scan_submission_plan(
         cash_cap_yuan=updated_cap,
         **target_updates,
     )
-    principal = min(floor_principal(effective_cash), remaining_target)
+    principal = min(
+        floor_principal_after_commission(effective_cash),
+        remaining_target,
+    )
     if now >= hard_stop:
         if principal < PRINCIPAL_STEP_YUAN:
             controller.apply(
@@ -1043,7 +1066,7 @@ def _scan_submission_plan(
         maximum_principal_yuan=maximum_principal_yuan,
     )
     final_principal = min(
-        floor_principal(effective_cash),
+        floor_principal_after_commission(effective_cash),
         remaining_target,
     )
     if final_principal < PRINCIPAL_STEP_YUAN:
@@ -1541,7 +1564,10 @@ def _finish_at_hard_stop(
         cash_usage_ratio=cash_usage_ratio,
         maximum_principal_yuan=maximum_principal_yuan,
     )
-    principal = min(floor_principal(effective), remaining_target)
+    principal = min(
+        floor_principal_after_commission(effective),
+        remaining_target,
+    )
     if principal >= PRINCIPAL_STEP_YUAN:
         return controller.halt(
             event=AfternoonEvent.HARD_STOP_RESIDUAL,
@@ -1639,7 +1665,7 @@ def _remaining_ratio_budget(
             raise ExecutionSafetyError(
                 "filled principal exists before the second target was frozen"
             )
-        target = floor_principal(effective_cash, ratio)
+        target = floor_principal_after_commission(effective_cash, ratio)
         if maximum:
             target = min(target, maximum)
         if target < PRINCIPAL_STEP_YUAN:
@@ -1663,7 +1689,7 @@ def _remaining_ratio_budget(
             raise ExecutionSafetyError(
                 "durable second target budget is invalid"
             )
-        ceiling = floor_principal(initial_cash, ratio)
+        ceiling = floor_principal_after_commission(initial_cash, ratio)
         if maximum:
             ceiling = min(ceiling, maximum)
         if target > ceiling:
@@ -1677,6 +1703,22 @@ def _remaining_ratio_budget(
     remaining = target - accounted
     remaining -= remaining % PRINCIPAL_STEP_YUAN
     return target, remaining, updates
+
+
+def _durable_afternoon_remaining(
+    data: Mapping[str, object],
+) -> int | None:
+    """Return the durable remaining target (CNY 1,000 steps), or None when
+    the target has not been frozen yet or the ledger is malformed."""
+    try:
+        target = int(data.get("target_principal_yuan", -1))
+        accounted = int(data.get("accounted_filled_principal_yuan", 0))
+    except (TypeError, ValueError):
+        return None
+    if target < 0 or accounted < 0:
+        return None
+    remaining = target - accounted
+    return max(remaining - (remaining % PRINCIPAL_STEP_YUAN), 0)
 
 
 def _optional_float(value: object) -> float | None:

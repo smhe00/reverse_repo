@@ -10,26 +10,28 @@ param(
         "Disable",
         "ConfigureMail",
         "TestMail",
-        "ResetCertificate",
-        "Cert",
-        "CertDisable",
-        "CertRemove",
-        "CertStatus",
         "LiveCert",
         "LiveCertPreflight",
         "LiveCertStatus",
         "LiveCertReset",
-        "Stress",
-        "StressDisable",
-        "StressRemove",
-        "StressStatus",
+        "DevBind",
+        "DevStatus",
+        "DevCert",
+        "DevCertDisable",
+        "DevCertRemove",
+        "DevCertStatus",
+        "DevCertReset",
+        "DevStress",
+        "DevStressDisable",
+        "DevStressRemove",
+        "DevStressStatus",
         "Initialize",
         "Help"
     )]
     [string]$Action,
+    [string]$LiveCertConfirmation = "",
     [string]$CertDate = "",
-    [string]$StressDate = "",
-    [string]$LiveCertConfirmation = ""
+    [string]$StressDate = ""
 )
 
 Set-StrictMode -Version Latest
@@ -48,16 +50,16 @@ $certTaskNames = @(
     "miniQMT SIM Repo V3 Morning Recovery",
     "miniQMT SIM Repo V3 Certificate"
 )
-$readOnlyTaskNames = @(
-    "miniQMT LIVE READONLY Morning",
-    "miniQMT LIVE READONLY Afternoon"
-)
 $obsoleteCertTaskNames = @(
     "miniQMT SIM Repo V2 First Recovery",
     "miniQMT SIM Repo V2 Second",
     "miniQMT SIM Repo V2 Certificate",
     "miniQMT SIM Repo V2 Morning Recovery",
     "miniQMT SIM Repo V2 Afternoon"
+)
+$readOnlyTaskNames = @(
+    "miniQMT LIVE READONLY Morning",
+    "miniQMT LIVE READONLY Afternoon"
 )
 $legacyProjectTaskNames = @(
     "miniQMT Backtest DB Update Yesterday"
@@ -589,13 +591,10 @@ function Assert-LiveEnableGate {
     $gateScript = Join-Path `
         $PSScriptRoot `
         "verify_repo_release_gate.py"
-    $qmtPath = Get-ReverseRepoQmtPath -Environment "live"
+    $qmtPath = Get-ReverseRepoLiveQmtPath
     $bindingPath = Join-Path `
         $repoRoot `
         "config\repo_live_account_binding.local.json"
-    $simulationCertificatePath = Join-Path `
-        $repoRoot `
-        "reports\gc001_intraday\simulation_validation\latest.json"
     $liveChannelCertificatePath = Join-Path `
         $repoRoot `
         "reports\gc001_intraday\live_channel_validation\latest.json"
@@ -609,6 +608,7 @@ function Assert-LiveEnableGate {
         $pythonPath,
         $gateScript,
         $bindingPath,
+        $liveChannelCertificatePath,
         $signingKeyPath,
         $strategyConfigPath
     )) {
@@ -620,19 +620,10 @@ function Assert-LiveEnableGate {
         $gateScript,
         "--qmt-path", $qmtPath,
         "--account-binding", $bindingPath,
+        "--live-channel-certificate", $liveChannelCertificatePath,
         "--signing-key", $signingKeyPath,
         "--strategy-config", $strategyConfigPath
     )
-    if (Test-Path -LiteralPath $simulationCertificatePath -PathType Leaf) {
-        $gateArguments += @(
-            "--simulation-certificate", $simulationCertificatePath
-        )
-    }
-    if (Test-Path -LiteralPath $liveChannelCertificatePath -PathType Leaf) {
-        $gateArguments += @(
-            "--live-channel-certificate", $liveChannelCertificatePath
-        )
-    }
     & $pythonPath @gateArguments
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
         throw "Live enable gate failed."
@@ -677,7 +668,7 @@ function Get-LiveChannelCertificationStatus {
         return
     }
     & $pythonPath $validatorPath status `
-        --qmt-path (Get-ReverseRepoQmtPath -Environment "live") `
+        --qmt-path (Get-ReverseRepoLiveQmtPath) `
         --account-binding (Join-Path $repoRoot "config\repo_live_account_binding.local.json") `
         --certificate $certificatePath `
         --signing-key (Join-Path $repoRoot "config\repo_release_gate_secret.local.json")
@@ -782,13 +773,18 @@ function Test-FailureEmail {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Developer-only simulation validation and stress-test orchestration. These
+# functions are reachable only through the .\rr dev command group and never
+# through the ordinary user surface. The live-enable gate stays live-only.
+# ---------------------------------------------------------------------------
+
 function Reset-SimulationCertificate {
     $certificatePath = Join-Path `
         $repoRoot `
         "reports\gc001_intraday\simulation_validation\latest.json"
     if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf)) {
-        Remove-ReverseRepoLiveEnableManifest
-        Write-Output "模拟证书不存在，实盘门禁已经处于未认证状态。"
+        Write-Output "模拟验证证书不存在。"
         return
     }
     $certificate = Get-Item -LiteralPath $certificatePath
@@ -799,11 +795,10 @@ function Reset-SimulationCertificate {
     $archivePath = Join-Path $archiveDirectory $archiveName
     if (-not $PSCmdlet.ShouldProcess(
         $certificate.FullName,
-        "Archive and revoke simulation certificate"
+        "Archive and revoke simulation validation certificate"
     )) {
         return
     }
-    Remove-ReverseRepoLiveEnableManifest
     New-Item `
         -ItemType Directory `
         -Force `
@@ -812,7 +807,7 @@ function Reset-SimulationCertificate {
     Move-Item `
         -LiteralPath $certificate.FullName `
         -Destination $archivePath
-    Write-Output "模拟证书已撤销并归档：$archivePath"
+    Write-Output "模拟验证证书已撤销并归档：$archivePath"
 }
 
 function Install-SimulationCertificationTasks {
@@ -826,7 +821,8 @@ function Install-SimulationCertificationTasks {
         ) {
             throw (
                 "Live reverse-repo task is enabled: $name. " +
-                "Run .\rr off before scheduling simulation certification."
+                "Run .\rr off before scheduling developer simulation " +
+                "certification."
             )
         }
     }
@@ -834,7 +830,7 @@ function Install-SimulationCertificationTasks {
         $PSScriptRoot `
         "install_repo_simulation_validation_tasks.ps1"
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
-        throw "Simulation certification installer is missing: $scriptPath"
+        throw "Developer simulation certification installer is missing: $scriptPath"
     }
     if ([string]::IsNullOrWhiteSpace($CertDate)) {
         & $scriptPath
@@ -848,7 +844,7 @@ function Install-SimulationCertificationTasks {
         )
     }
     catch [FormatException] {
-        throw "Certification date must use YYYY-MM-DD format."
+        throw "Developer simulation certification date must use YYYY-MM-DD format."
     }
     & $scriptPath -ValidationDate $parsedDate
 }
@@ -914,7 +910,7 @@ function Disable-SimulationCertificationTasks {
         }
     )
     if ($installed.Count -eq 0) {
-        Write-Output "模拟能力认证任务未安装，无需撤销。"
+        Write-Output "模拟验证认证任务未安装，无需撤销。"
         return
     }
     $running = @(
@@ -922,14 +918,14 @@ function Disable-SimulationCertificationTasks {
     )
     if ($running.Count -gt 0) {
         throw (
-            "A simulation certification task is already running. " +
+            "A developer simulation certification task is already running. " +
             "Refusing abrupt termination."
         )
     }
     foreach ($task in $installed) {
         if ($PSCmdlet.ShouldProcess(
             $task.TaskName,
-            "Disable one-time simulation certification task"
+            "Disable developer simulation certification task"
         )) {
             Disable-ScheduledTask -TaskName $task.TaskName | Out-Null
         }
@@ -949,7 +945,7 @@ function Remove-SimulationCertificationTasks {
         }
     )
     if ($installed.Count -eq 0) {
-        Write-Output "模拟能力认证任务未安装，无需删除。"
+        Write-Output "模拟验证认证任务未安装，无需删除。"
         return
     }
     $running = @(
@@ -957,14 +953,14 @@ function Remove-SimulationCertificationTasks {
     )
     if ($running.Count -gt 0) {
         throw (
-            "A simulation certification task is already running. " +
+            "A developer simulation certification task is already running. " +
             "Refusing abrupt termination."
         )
     }
     foreach ($task in $installed) {
         if ($PSCmdlet.ShouldProcess(
             $task.TaskName,
-            "Delete one-time simulation certification task"
+            "Delete developer simulation certification task"
         )) {
             Unregister-ScheduledTask `
                 -TaskName $task.TaskName `
@@ -979,7 +975,7 @@ function Install-SimulationStressTask {
         $PSScriptRoot `
         "install_repo_simulation_stress_task.ps1"
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
-        throw "Simulation stress installer is missing: $scriptPath"
+        throw "Developer simulation stress installer is missing: $scriptPath"
     }
     if ([string]::IsNullOrWhiteSpace($StressDate)) {
         & $scriptPath
@@ -993,7 +989,7 @@ function Install-SimulationStressTask {
         )
     }
     catch [FormatException] {
-        throw "Stress date must use YYYY-MM-DD format."
+        throw "Developer simulation stress date must use YYYY-MM-DD format."
     }
     & $scriptPath -StressDate $parsedDate
 }
@@ -1054,13 +1050,14 @@ function Disable-SimulationStressTask {
     }
     if ([string]$task.State -eq "Running") {
         throw (
-            "Simulation stress task is already running. Refusing abrupt " +
-            "termination because simulated orders or positions may need cleanup."
+            "Developer simulation stress task is already running. Refusing " +
+            "abrupt termination because simulated orders or positions may " +
+            "need cleanup."
         )
     }
     if ($PSCmdlet.ShouldProcess(
         $stressTaskName,
-        "Disable one-time simulation stress task"
+        "Disable developer simulation stress task"
     )) {
         Disable-ScheduledTask -TaskName $stressTaskName | Out-Null
     }
@@ -1077,19 +1074,69 @@ function Remove-SimulationStressTask {
     }
     if ([string]$task.State -eq "Running") {
         throw (
-            "Simulation stress task is already running. Refusing abrupt " +
-            "termination because simulated orders or positions may need cleanup."
+            "Developer simulation stress task is already running. Refusing " +
+            "abrupt termination because simulated orders or positions may " +
+            "need cleanup."
         )
     }
     if ($PSCmdlet.ShouldProcess(
         $stressTaskName,
-        "Delete one-time simulation stress task"
+        "Delete developer simulation stress task"
     )) {
         Unregister-ScheduledTask `
             -TaskName $stressTaskName `
             -Confirm:$false
     }
     Get-SimulationStressTaskStatus
+}
+
+function Get-DeveloperValidationStatus {
+    $certificatePath = Join-Path `
+        $repoRoot `
+        "reports\gc001_intraday\simulation_validation\latest.json"
+    if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf)) {
+        Write-Output "模拟验证证书：不存在。执行 .\rr dev cert [日期]。"
+    }
+    else {
+        $pythonPath = Get-ReverseRepoPython
+        $validatorPath = Join-Path `
+            $PSScriptRoot `
+            "dev_simulation_certificate.py"
+        $signingKeyPath = Join-Path `
+            $repoRoot `
+            "config\repo_release_gate_secret.local.json"
+        & $pythonPath `
+            $validatorPath `
+            "--certificate" `
+            $certificatePath `
+            "--signing-key" `
+            $signingKeyPath
+        if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+            Write-Output "模拟验证证书：与当前代码不匹配或无效。"
+        }
+        else {
+            Write-Output "模拟验证证书：与当前代码匹配。"
+        }
+    }
+    Get-SimulationCertificationTaskStatus
+    Write-Output ""
+    Get-SimulationStressTaskStatus
+}
+
+function Connect-DeveloperSimulationBinding {
+    $scriptPath = Join-Path `
+        $PSScriptRoot `
+        "dev_bind_simulation.ps1"
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "Developer simulation binding script is missing: $scriptPath"
+    }
+    & powershell.exe `
+        -NoProfile `
+        -ExecutionPolicy Bypass `
+        -File $scriptPath
+    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+        throw "Developer simulation binding failed."
+    }
 }
 
 function Show-ReverseRepoTaskHelp {
@@ -1109,18 +1156,18 @@ rr - miniQMT 逆回购自动任务管理工具
       撤销实盘启用快照并禁用两个任务，但保留任务定义。
 
   .\rr on
-      通过本地验证、账户绑定和模拟能力证书门禁后创建签名启用快照，
+      通过本地验证、账户绑定和1000元实盘快速证书门禁后创建签名启用快照，
       仅启用资金比例大于0的任务。任务尚未安装时先执行 .\rr add。
 
   .\rr add
       安装或更新两个实盘任务；安装完成后保持Disabled，不会立即交易。
 
   .\rr del
-      删除两个实盘任务，不删除代码、日志、报告或模拟任务。
+      删除两个实盘任务，不删除代码、日志、报告或只读任务。
 
   .\rr clear
       禁用并删除本项目全部已知计划任务，包括实盘、只读检查、模拟认证、
-      恢复和压力测试任务，同时撤销实盘启用快照；不删除代码、配置、
+      恢复和压力测试旧任务，同时撤销实盘启用快照；不删除代码、配置、
       账户绑定、证书或报告。运行中的任务不会被强制终止。
 
   当前实盘参数：
@@ -1129,48 +1176,47 @@ rr - miniQMT 逆回购自动任务管理工具
     第二次：$secondStartText 启动，$secondExecutionText 扫描GC001/R-001，
             使用 $secondCashUsagePercent 的首次有效资金快照。
 
-【完整模拟能力认证：可选的高强度认证】
-  .\rr cert [YYYY-MM-DD]
-      部署单日四项模拟认证任务。正式上午/下午执行器验证完整正常路径；
-      当天另一隔离交易窗口用独立journal、锁和委托命名空间验证崩溃恢复。
-      省略日期时自动选择下一个可完整执行的工作日；部署前必须 rr off。
-
-  .\rr cert stat | off | del
-      stat查看四项认证任务；off在未运行时撤销后续调度；del删除任务定义。
-      任务正在运行时拒绝强制终止。当日15:31自动签发证书。
-
-  .\rr reset
-      撤销并归档当前模拟能力证书。之后必须重新执行 rr cert，才能启用实盘。
-
 【快速实盘通道认证：固定1000元】
-  .\rr cert live
+  .\rr cert
       前台执行一次GC001真实逆回购，累计成交本金硬上限1000元。必须先rr off，
       并人工输入LIVE 1000；成功后任务仍保持Disabled，不会自动rr on。
 
-  .\rr cert live stat
+  .\rr cert stat
       只读核验证书、journal和本机环境；不连接QMT、不下单。
 
-  .\rr cert live reset
+  .\rr cert reset
       归档并撤销快速实盘证书及其证据，同时撤销实盘启用快照。
-
-【一次性模拟压力测试：不替代能力认证】
-  .\rr stress [YYYY-MM-DD]
-      部署模拟账户5Hz全链路压力测试。省略日期时自动选择工作日。
-
-  .\rr stress stat | off | del
-      查看、撤销或删除压力任务；运行中拒绝强制终止。
 
 【邮件与帮助】
 
   .\rr mail
-      可选：配置故障告警邮箱。SMTP 密码由 Windows 当前用户加密保存，
-      不写入代码、日志或版本库；未配置不会阻止任务启用或策略执行。
+      可选：配置执行结果/认证通知邮箱。SMTP 密码由 Windows 当前用户加密
+      保存，不写入代码、日志或版本库；未配置不会阻止任务启用或策略执行。
 
   .\rr mt
       使用已保存的加密配置发送一封测试邮件，不重新输入密码。
 
   .\rr help
       显示本帮助。直接运行 .\rr 也会显示本帮助。
+
+【开发者模拟验证与压力测试（普通用户无需使用）】
+  .\rr dev bind
+      配置模拟miniQMT路径并绑定模拟账户；开发者在本地验证代码用。
+
+  .\rr dev cert [YYYY-MM-DD]
+      部署单日模拟认证：正式上午/下午执行器验证正常路径，另一隔离窗口
+      验证崩溃恢复，当日15:31签发模拟验证证书。该证书不参与实盘启用门禁。
+
+  .\rr dev cert stat | off | del | reset
+      查看、撤销、删除模拟认证任务，或归档并撤销模拟验证证书。
+
+  .\rr dev stress [YYYY-MM-DD]
+      部署模拟账户5Hz全链路压力测试；stat/off/del 查看、撤销、删除。
+
+  .\rr dev status
+      汇总查看模拟验证证书、认证任务和压力任务状态。
+
+  详细说明见 docs\developer_validation.md。
 
 运行要求：
   - 可在 reverse_repo 目录执行；仓库根目录的 rr 是兼容转发入口。
@@ -1232,21 +1278,6 @@ switch ($Action) {
     "TestMail" {
         Test-FailureEmail
     }
-    "ResetCertificate" {
-        Reset-SimulationCertificate
-    }
-    "Cert" {
-        Install-SimulationCertificationTasks
-    }
-    "CertDisable" {
-        Disable-SimulationCertificationTasks
-    }
-    "CertRemove" {
-        Remove-SimulationCertificationTasks
-    }
-    "CertStatus" {
-        Get-SimulationCertificationTaskStatus
-    }
     "LiveCert" {
         Invoke-LiveChannelCertification
     }
@@ -1259,16 +1290,37 @@ switch ($Action) {
     "LiveCertReset" {
         Reset-LiveChannelCertificate
     }
-    "Stress" {
+    "DevBind" {
+        Connect-DeveloperSimulationBinding
+    }
+    "DevStatus" {
+        Get-DeveloperValidationStatus
+    }
+    "DevCert" {
+        Install-SimulationCertificationTasks
+    }
+    "DevCertDisable" {
+        Disable-SimulationCertificationTasks
+    }
+    "DevCertRemove" {
+        Remove-SimulationCertificationTasks
+    }
+    "DevCertStatus" {
+        Get-SimulationCertificationTaskStatus
+    }
+    "DevCertReset" {
+        Reset-SimulationCertificate
+    }
+    "DevStress" {
         Install-SimulationStressTask
     }
-    "StressDisable" {
+    "DevStressDisable" {
         Disable-SimulationStressTask
     }
-    "StressRemove" {
+    "DevStressRemove" {
         Remove-SimulationStressTask
     }
-    "StressStatus" {
+    "DevStressStatus" {
         Get-SimulationStressTaskStatus
     }
     "Help" {

@@ -35,7 +35,6 @@ class ActionSpec:
 
 ACTION_SPECS: dict[str, ActionSpec] = {
     "status": ActionSpec(manager_action="Status", timeout_seconds=30),
-    "verify": ActionSpec(verify=True, timeout_seconds=300),
     "off": ActionSpec(
         manager_action="Disable",
         confirmation="DISABLE LIVE",
@@ -45,7 +44,6 @@ ACTION_SPECS: dict[str, ActionSpec] = {
         confirmation="ENABLE LIVE",
         timeout_seconds=300,
     ),
-    "cert_status": ActionSpec(manager_action="CertStatus", timeout_seconds=30),
     "live_cert": ActionSpec(
         manager_action="LiveCert",
         confirmation="LIVE 1000",
@@ -59,9 +57,10 @@ ACTION_SPECS: dict[str, ActionSpec] = {
         manager_action="LiveCertStatus",
         timeout_seconds=30,
     ),
-    "stress_status": ActionSpec(
-        manager_action="StressStatus",
-        timeout_seconds=30,
+    "live_cert_reset": ActionSpec(
+        manager_action="LiveCertReset",
+        confirmation="REVOKE LIVE CERT",
+        timeout_seconds=60,
     ),
     "mail_test": ActionSpec(manager_action="TestMail", timeout_seconds=60),
 }
@@ -125,13 +124,6 @@ def _parse_live_task_status(output: str) -> list[dict[str, str]]:
 def _parse_certification_status(output: str) -> dict[str, str]:
     for raw_line in output.splitlines():
         line = raw_line.strip()
-        if line.startswith("Certification basis: full simulation"):
-            return {
-                "kind": "full_simulation",
-                "valid": "true",
-                "summary": "完整模拟认证：有效（优先使用）",
-                "scope": "包含正常路径、恢复路径和下午编排",
-            }
         if line.startswith("Certification basis: live-channel"):
             return {
                 "kind": "live_channel",

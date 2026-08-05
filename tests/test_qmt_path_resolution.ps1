@@ -1,4 +1,4 @@
-﻿Set-StrictMode -Version Latest
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -58,14 +58,18 @@ function Assert-Equal {
 $testRoot = Join-Path `
     ([System.IO.Path]::GetTempPath()) `
     ("reverse_repo_qmt_path_test_" + [guid]::NewGuid().ToString("N"))
+# Keep this test script itself ASCII-compatible for Windows PowerShell
+# 5.1, then construct the Chinese simulation marker from Unicode code points.
+$simulationMarker = [char]0x6A21 + [char]0x62DF
+$swapPath = "D:\$simulationMarker" + "QMT"
 try {
     $liveRoot = Join-Path $testRoot "LiveQMT"
-    $simulationRoot = Join-Path $testRoot "模拟QMT"
     $otherLiveRoot = Join-Path $testRoot "OtherLiveQMT"
+    $pendingRoot = Join-Path $testRoot "PendingQMT"
     $liveUserdata = Join-Path $liveRoot "userdata_mini"
-    $simulationUserdata = Join-Path $simulationRoot "userdata_mini"
+    $pendingUserdata = Join-Path $pendingRoot "userdata_mini"
     New-Item -ItemType Directory -Path $liveUserdata | Out-Null
-    New-Item -ItemType Directory -Path $simulationRoot | Out-Null
+    New-Item -ItemType Directory -Path $pendingRoot | Out-Null
     New-Item -ItemType Directory -Path $otherLiveRoot | Out-Null
 
     $script:processMode = "unique"
@@ -80,11 +84,6 @@ try {
                 ExecutablePath = Join-Path `
                     $liveRoot `
                     "bin.x64\XtMiniQmt.exe"
-            },
-            [pscustomobject]@{
-                ExecutablePath = Join-Path `
-                    $simulationRoot `
-                    "bin.x64\XtMiniQmt.exe"
             }
         )
         if ($script:processMode -eq "ambiguous") {
@@ -97,24 +96,14 @@ try {
         return $result
     }
     $detectedLive = Get-RunningMiniQmtInstallRoot `
-        -Environment "live" `
-        3>$null `
-        6>$null
-    $detectedSimulation = Get-RunningMiniQmtInstallRoot `
-        -Environment "simulation" `
         3>$null `
         6>$null
     Assert-Equal `
         -Expected $liveRoot `
         -Actual $detectedLive `
         -Message "Running live miniQMT directory was not discovered."
-    Assert-Equal `
-        -Expected $simulationRoot `
-        -Actual $detectedSimulation `
-        -Message "Running simulation miniQMT directory was not discovered."
     $script:processMode = "ambiguous"
     $ambiguousLive = Get-RunningMiniQmtInstallRoot `
-        -Environment "live" `
         3>$null `
         6>$null
     Assert-Equal `
@@ -134,13 +123,13 @@ try {
         }
         if ($script:readMode -eq "wait") {
             if ($script:readCount -eq 1) {
-                return $simulationRoot
+                return $pendingRoot
             }
-            New-Item -ItemType Directory -Path $simulationUserdata | Out-Null
+            New-Item -ItemType Directory -Path $pendingUserdata | Out-Null
             return "Y"
         }
         if ($script:readMode -eq "swap") {
-            return $simulationRoot
+            return $swapPath
         }
         if ($script:readMode -eq "detected") {
             return ""
@@ -149,7 +138,6 @@ try {
     }
     $resolvedLive = Resolve-QmtUserdataPath `
         -Prompt "live" `
-        -Environment "live" `
         -DefaultInstallRoot "C:\unused" `
         -DetectedInstallRoot "C:\also-unused" `
         -Existing $liveUserdata `
@@ -165,7 +153,6 @@ try {
     $script:readCount = 0
     $resolvedDetected = Resolve-QmtUserdataPath `
         -Prompt "live" `
-        -Environment "live" `
         -DefaultInstallRoot "C:\unused" `
         -DetectedInstallRoot $detectedLive `
         -Existing "" `
@@ -180,15 +167,14 @@ try {
     # creates it, the same resolver call continues successfully.
     $script:readMode = "wait"
     $script:readCount = 0
-    $resolvedSimulation = Resolve-QmtUserdataPath `
-        -Prompt "simulation" `
-        -Environment "simulation" `
-        -DefaultInstallRoot $simulationRoot `
+    $resolvedPending = Resolve-QmtUserdataPath `
+        -Prompt "live" `
+        -DefaultInstallRoot $pendingRoot `
         3>$null `
         6>$null
     Assert-Equal `
-        -Expected $simulationUserdata `
-        -Actual $resolvedSimulation `
+        -Expected $pendingUserdata `
+        -Actual $resolvedPending `
         -Message "Resolver did not continue after userdata appeared."
     Assert-Equal `
         -Expected "2" `
@@ -202,12 +188,11 @@ try {
     try {
         $null = Resolve-QmtUserdataPath `
             -Prompt "live" `
-            -Environment "live" `
             -DefaultInstallRoot $liveRoot `
             -Existing ""
     }
     catch {
-        $swapRejected = $_.Exception.Message -match "两个路径可能填反"
+        $swapRejected = $_.Exception.Message.Contains($swapPath)
     }
     if (-not $swapRejected) {
         throw "An obviously swapped live QMT path was not rejected."

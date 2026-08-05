@@ -76,12 +76,17 @@ def main() -> int:
     notify.add_argument("--journal", required=True)
     notify.add_argument("--reason", required=True)
 
+    notify_ok = subparsers.add_parser("notify-success")
+    notify_ok.add_argument("--alert-config", required=True)
+    notify_ok.add_argument("--journal", required=True)
+
     args = parser.parse_args()
     if args.command == "notify-failure":
         from repo_failure_alert import (
             load_optional_smtp_failure_notifier,
-            send_standalone_failure,
+            notify_journal_certification,
         )
+        from repo_execution_core import AtomicJournal
 
         notifier, warning = load_optional_smtp_failure_notifier(
             Path(args.alert_config)
@@ -89,15 +94,63 @@ def main() -> int:
         if notifier is None:
             print("Optional failure email is disabled: " + str(warning or ""))
             return 0
-        send_standalone_failure(
-            notifier,
-            strategy="repo_live_cert",
-            trade_date=date.today().isoformat(),
-            environment="live",
-            reason=str(args.reason),
-            journal_path=Path(args.journal),
-        )
+        journal_path = Path(args.journal)
+        if journal_path.is_file():
+            journal = AtomicJournal(
+                journal_path,
+                strategy=PRODUCTION_STRATEGY_NAME,
+                trade_date=date.today(),
+            )
+            journal.load_or_initialize(machine_payload={})
+            notify_journal_certification(
+                notifier,
+                _read_only_proxy(journal),
+                environment="live",
+                state="certification_failed",
+                passed=False,
+                reason=str(args.reason),
+            )
+        else:
+            from repo_failure_alert import send_standalone_failure
+
+            send_standalone_failure(
+                notifier,
+                strategy=PRODUCTION_STRATEGY_NAME,
+                trade_date=date.today().isoformat(),
+                environment="live",
+                reason=str(args.reason),
+                journal_path=journal_path,
+            )
         print("Live-channel certification failure email was sent.")
+        return 0
+    if args.command == "notify-success":
+        from repo_failure_alert import (
+            load_optional_smtp_failure_notifier,
+            notify_journal_certification,
+        )
+        from repo_execution_core import AtomicJournal
+
+        notifier, warning = load_optional_smtp_failure_notifier(
+            Path(args.alert_config)
+        )
+        if notifier is None:
+            print("Optional failure email is disabled: " + str(warning or ""))
+            return 0
+        journal_path = Path(args.journal)
+        journal = AtomicJournal(
+            journal_path,
+            strategy=PRODUCTION_STRATEGY_NAME,
+            trade_date=date.today(),
+        )
+        journal.load_or_initialize(machine_payload={})
+        notify_journal_certification(
+            notifier,
+            _read_only_proxy(journal),
+            environment="live",
+            state="certificate_issued",
+            passed=True,
+        )
+        print("Live-channel certification success email was sent.")
         return 0
     if args.command == "preflight":
         result = live_preflight(
@@ -386,7 +439,11 @@ def validate_live_channel_evidence(
         "certification_mode_ok": data.get("live_channel_certification") is True,
         "fixed_cap_ok": int(data.get("maximum_principal_yuan", 0) or 0) == 1000,
         "fixed_cash_ratio_ok": float(data.get("cash_usage_ratio", -1)) == 1.0,
-        "namespace_ok": re.fullmatch(r"repo_live_cert_[0-9]{8}_", remark_prefix) is not None,
+        "namespace_ok": re.fullmatch(
+            r"repo_live_cert_[0-9]{8}_[0-9]{6}_",
+            remark_prefix,
+        )
+        is not None,
         "terminal_success_state_ok": machine.get("state") in {"done_filled", "done_partial"},
         "journal_has_no_unresolved_order": facts.get("unresolved_order") is False,
         "journal_reports_positive_fill": 0 < int(data.get("filled_principal_yuan", 0) or 0) <= 1000,
@@ -551,6 +608,34 @@ def load_json(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RuntimeError(f"{label} must be a JSON object")
     return payload
+
+
+def _read_only_proxy(journal: Any) -> Any:
+    """Wrap an AtomicJournal so alert delivery can read evidence but never
+    mutate the signed journal (certificate evidence hashes must stay valid)."""
+
+    class ReadOnlyJournal:
+        @property
+        def path(self) -> Path:
+            return journal.path
+
+        @property
+        def strategy(self) -> str:
+            return journal.strategy
+
+        @property
+        def trade_date(self) -> str:
+            return journal.trade_date
+
+        @property
+        def payload(self) -> dict[str, Any]:
+            return journal.payload
+
+        def update_data(self, **values: object) -> None:
+            del values
+            return
+
+    return ReadOnlyJournal()
 
 
 def load_signing_key(path: Path) -> bytes:

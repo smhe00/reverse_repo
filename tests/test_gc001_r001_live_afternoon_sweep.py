@@ -19,6 +19,7 @@ from gc001_r001_live_afternoon_sweep import (  # noqa: E402
     BrokerUpdateSignal,
     STRATEGY_NAME,
     AfternoonController,
+    _durable_afternoon_remaining,
     _market_break_resume_at,
     _parse_first_execution_time,
     _parse_afternoon_execution_time,
@@ -103,22 +104,22 @@ class AfternoonRecoveryTests(unittest.TestCase):
             cash_usage_ratio=0.40,
             maximum_principal_yuan=0,
         )
-        self.assertEqual(target, 400_000)
-        self.assertEqual(remaining, 400_000)
-        self.assertEqual(updates["target_principal_yuan"], 400_000)
+        self.assertEqual(target, 399_000)
+        self.assertEqual(remaining, 399_000)
+        self.assertEqual(updates["target_principal_yuan"], 399_000)
 
         target, remaining, updates = _remaining_ratio_budget(
             data={
                 "accounted_filled_principal_yuan": 150_000,
                 "initial_available_cash_yuan": 1_000_000,
-                "target_principal_yuan": 400_000,
+                "target_principal_yuan": 399_000,
             },
             effective_cash=850_000,
             cash_usage_ratio=0.40,
             maximum_principal_yuan=0,
         )
-        self.assertEqual(target, 400_000)
-        self.assertEqual(remaining, 250_000)
+        self.assertEqual(target, 399_000)
+        self.assertEqual(remaining, 249_000)
         self.assertEqual(updates, {})
 
     def test_second_ratio_rejects_tampered_durable_target(self):
@@ -133,6 +134,52 @@ class AfternoonRecoveryTests(unittest.TestCase):
                 cash_usage_ratio=0.40,
                 maximum_principal_yuan=0,
             )
+
+    def test_durable_afternoon_remaining_tracks_completion(self):
+        self.assertEqual(
+            _durable_afternoon_remaining(
+                {
+                    "target_principal_yuan": 400_000,
+                    "accounted_filled_principal_yuan": 0,
+                }
+            ),
+            400_000,
+        )
+        self.assertEqual(
+            _durable_afternoon_remaining(
+                {
+                    "target_principal_yuan": 400_000,
+                    "accounted_filled_principal_yuan": 400_000,
+                }
+            ),
+            0,
+        )
+        self.assertEqual(
+            _durable_afternoon_remaining(
+                {
+                    "target_principal_yuan": 400_000,
+                    "accounted_filled_principal_yuan": 399_000,
+                }
+            ),
+            1_000,
+        )
+        self.assertEqual(
+            _durable_afternoon_remaining(
+                {
+                    "accounted_filled_principal_yuan": 399_000,
+                }
+            ),
+            None,
+        )
+        self.assertEqual(
+            _durable_afternoon_remaining(
+                {
+                    "target_principal_yuan": "bad",
+                    "accounted_filled_principal_yuan": 0,
+                }
+            ),
+            None,
+        )
 
     def test_configurable_afternoon_time_accepts_only_safe_window(self):
         for value in (

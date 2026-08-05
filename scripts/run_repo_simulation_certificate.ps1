@@ -11,7 +11,7 @@ $repoRoot = Get-ReverseRepoRoot
 Set-Location -LiteralPath $repoRoot
 
 $pythonPath = Get-ReverseRepoPython
-$qmtPath = Get-ReverseRepoQmtPath -Environment "simulation"
+$qmtPath = Get-ReverseRepoSimulationQmtPath
 $bindingPath = Join-Path `
     $repoRoot `
     "config\repo_simulation_account_binding.local.json"

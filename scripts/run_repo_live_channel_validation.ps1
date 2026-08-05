@@ -26,7 +26,7 @@ if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
 }
 
 $pythonPath = Get-ReverseRepoPython
-$qmtPath = Get-ReverseRepoQmtPath -Environment "live"
+$qmtPath = Get-ReverseRepoLiveQmtPath
 $bindingPath = Join-Path $repoRoot "config\repo_live_account_binding.local.json"
 $signingKeyPath = Join-Path $repoRoot "config\repo_release_gate_secret.local.json"
 $validatorPath = Join-Path $PSScriptRoot "repo_live_channel_validation.py"
@@ -37,7 +37,17 @@ $alertSecretPath = Join-Path $repoRoot "config\repo_failure_email_secret.local.c
 $reportDirectory = Join-Path $repoRoot "reports\gc001_intraday\live_channel_validation"
 $dateStamp = Get-Date -Format "yyyyMMdd"
 $tradeDate = Get-Date -Format "yyyy-MM-dd"
-$journalPath = Join-Path $reportDirectory "live_channel_$dateStamp.journal.json"
+$attemptStamp = Get-Date -Format "HHmmss"
+$journalPath = Join-Path `
+    $reportDirectory `
+    "live_channel_${dateStamp}_${attemptStamp}.journal.json"
+if (Test-Path -LiteralPath $journalPath -PathType Leaf) {
+    throw (
+        "Certification journal already exists for this second: " +
+        "$journalPath. Wait a second and retry."
+    )
+}
+$remarkPrefix = "repo_live_cert_${dateStamp}_${attemptStamp}_"
 $preflightPath = Join-Path $reportDirectory "preflight_$dateStamp.json"
 $certificatePath = Join-Path $reportDirectory "latest.json"
 $mutexPath = Join-Path $repoRoot "reports\gc001_intraday\reverse_repo_execution.lock"
@@ -64,7 +74,12 @@ trap {
         $failureReport,
         (New-Object System.Text.UTF8Encoding($false))
     )
-    if (-not $executorStarted) {
+    # A pre-existing certificate is an operational guard, not a trading
+    # fault; do not raise a failure alert for it.
+    if (
+        -not $executorStarted `
+        -and $reason -notlike "*A live-channel certificate already exists*"
+    ) {
         try {
             $mailEnabled = Enable-ReverseRepoOptionalFailureEmail `
                 -ConfigPath $alertConfigPath `
@@ -113,7 +128,7 @@ foreach ($requiredPath in @(
     }
 }
 if (Test-Path -LiteralPath $certificatePath -PathType Leaf) {
-    throw "A live-channel certificate already exists. Use .\rr cert live stat or reset."
+    throw "A live-channel certificate already exists. Use .\rr cert stat or reset."
 }
 New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
 
@@ -162,50 +177,102 @@ $arguments = @(
     "--cash-usage-ratio", "1",
     "--maximum-principal-yuan", "1000",
     "--remark-root", "repo_live_cert",
+    "--remark-prefix", $remarkPrefix,
     "--live-channel-certification"
 )
 $alertEnabled = Enable-ReverseRepoOptionalFailureEmail `
     -ConfigPath $alertConfigPath `
     -SecretPath $alertSecretPath
-if ($alertEnabled) {
-    $arguments += @("--alert-config", $alertConfigPath)
-}
 try {
     $executorStarted = $true
     & $pythonPath @arguments
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+        if ($alertEnabled) {
+            & $pythonPath $validatorPath notify-failure `
+                --alert-config $alertConfigPath `
+                --journal $journalPath `
+                --reason "Production state machine did not reach a certifiable state."
+        }
         throw "Production state machine did not reach a certifiable state."
     }
+    & $pythonPath $validatorPath certify `
+        --qmt-path $qmtPath `
+        --account-binding $bindingPath `
+        --journal $journalPath `
+        --preflight $preflightPath `
+        --signing-key $signingKeyPath `
+        --output $certificatePath
+    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+        if ($alertEnabled) {
+            & $pythonPath $validatorPath notify-failure `
+                --alert-config $alertConfigPath `
+                --journal $journalPath `
+                --reason "Broker evidence and journal reconciliation failed; no certificate issued."
+        }
+        throw "Broker evidence and journal reconciliation failed; no certificate issued."
+    }
+    $certificate = Get-Content -LiteralPath $certificatePath -Raw |
+        ConvertFrom-Json
+    $successReport = [ordered]@{
+        schema_version = 1
+        certificate_type = "live_channel"
+        passed = $true
+        completed_at = [datetimeoffset]::Now.ToString("o")
+        filled_principal_yuan = [int]$certificate.filled_principal_yuan
+        certificate = [System.IO.Path]::GetFileName($certificatePath)
+        journal = [System.IO.Path]::GetFileName($journalPath)
+    } | ConvertTo-Json -Depth 4
+    [System.IO.File]::WriteAllText(
+        $resultReportPath,
+        $successReport,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+
+    # Archive stale certification evidence from earlier attempts on success,
+    # keeping only this attempt's certificate, journal, preflight and report.
+    $keepPaths = @(
+        $journalPath,
+        $preflightPath,
+        $certificatePath,
+        $resultReportPath
+    ) | ForEach-Object {
+        [System.IO.Path]::GetFullPath($_)
+    }
+    $staleItems = @(
+        Get-ChildItem `
+            -LiteralPath $reportDirectory `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Where-Object {
+                [System.IO.Path]::GetFullPath($_.FullName) `
+                    -notin $keepPaths
+            }
+    )
+    if ($staleItems.Count -gt 0) {
+        $archiveDirectory = Join-Path `
+            $reportDirectory `
+            ("revoked\" + (Get-Date -Format "yyyyMMdd_HHmmss"))
+        New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $archiveDirectory |
+            Out-Null
+        foreach ($item in $staleItems) {
+            Move-Item `
+                -LiteralPath $item.FullName `
+                -Destination $archiveDirectory
+        }
+        Write-Output "Stale certification evidence archived: $archiveDirectory"
+    }
+
+    if ($alertEnabled) {
+        & $pythonPath $validatorPath notify-success `
+            --alert-config $alertConfigPath `
+            --journal $journalPath
+    }
+    Write-Output "Live-channel certification passed. Live tasks remain Disabled."
+    Write-Output "Review .\rr cert stat, then run .\rr on manually."
 }
 finally {
     Disable-ReverseRepoOptionalFailureEmail
 }
-
-& $pythonPath $validatorPath certify `
-    --qmt-path $qmtPath `
-    --account-binding $bindingPath `
-    --journal $journalPath `
-    --preflight $preflightPath `
-    --signing-key $signingKeyPath `
-    --output $certificatePath
-if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
-    throw "Broker evidence and journal reconciliation failed; no certificate issued."
-}
-$certificate = Get-Content -LiteralPath $certificatePath -Raw |
-    ConvertFrom-Json
-$successReport = [ordered]@{
-    schema_version = 1
-    certificate_type = "live_channel"
-    passed = $true
-    completed_at = [datetimeoffset]::Now.ToString("o")
-    filled_principal_yuan = [int]$certificate.filled_principal_yuan
-    certificate = [System.IO.Path]::GetFileName($certificatePath)
-    journal = [System.IO.Path]::GetFileName($journalPath)
-} | ConvertTo-Json -Depth 4
-[System.IO.File]::WriteAllText(
-    $resultReportPath,
-    $successReport,
-    (New-Object System.Text.UTF8Encoding($false))
-)
-Write-Output "Live-channel certification passed. Live tasks remain Disabled."
-Write-Output "Review .\rr cert live stat, then run .\rr on manually."

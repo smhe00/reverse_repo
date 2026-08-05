@@ -30,7 +30,7 @@ from repo_execution_core import (
     assert_order_budget,
     build_book_plan,
     find_unique_order_by_remark,
-    floor_principal,
+    floor_principal_after_commission,
     first_execution_deadline,
     is_first_execution_time,
     is_exchange_trading_day,
@@ -266,6 +266,15 @@ def main() -> int:
         help="Simulation-only order namespace override for isolated diagnostics.",
     )
     parser.add_argument(
+        "--remark-prefix",
+        default="",
+        help=(
+            "Explicit full order-remark namespace. Overrides the default "
+            "root+trade-date prefix; used by the live canary to isolate "
+            "each certification attempt from earlier same-day attempts."
+        ),
+    )
+    parser.add_argument(
         "--alert-config",
         default="",
         help="Optional failure-email configuration; contains no SMTP password.",
@@ -351,6 +360,22 @@ def _run_morning_command(
             raise ValueError(
                 "live channel certification requires repo_live_cert remarks"
             )
+        certification_prefix = (
+            args.remark_prefix
+            or f"{args.remark_root}_{trade_date:%Y%m%d}_"
+        )
+        if (
+            re.fullmatch(
+                r"repo_live_cert_[0-9]{8}_[0-9]{6}_",
+                certification_prefix,
+            )
+            is None
+        ):
+            raise ValueError(
+                "live channel certification requires a unique "
+                "per-attempt remark prefix matching "
+                "repo_live_cert_YYYYMMDD_HHMMSS_"
+            )
         if int(args.maximum_principal_yuan) != 1000:
             raise ValueError(
                 "live channel certification is hard-capped at CNY 1,000"
@@ -359,7 +384,13 @@ def _run_morning_command(
             raise ValueError(
                 "live channel certification requires cash usage ratio 1"
             )
-    elif args.environment != "simulation" and args.remark_root != REMARK_PREFIX:
+    elif (
+        args.environment != "simulation"
+        and (
+            args.remark_root != REMARK_PREFIX
+            or args.remark_prefix
+        )
+    ):
         raise ValueError("custom remark root is restricted to simulation")
     maximum_principal = int(args.maximum_principal_yuan)
     if maximum_principal < 0:
@@ -383,7 +414,10 @@ def _run_morning_command(
         args.execution_time,
         timezone=now.tzinfo,
     )
-    remark_prefix = f"{args.remark_root}_{trade_date:%Y%m%d}_"
+    remark_prefix = (
+        args.remark_prefix
+        or f"{args.remark_root}_{trade_date:%Y%m%d}_"
+    )
     journal = AtomicJournal(
         Path(args.journal),
         strategy=STRATEGY_NAME,
@@ -1029,7 +1063,7 @@ def _wait_for_submission_snapshot(
                         "durably frozen"
                     )
                 initial_cash = reported_cash
-                target_principal = floor_principal(
+                target_principal = floor_principal_after_commission(
                     initial_cash,
                     cash_usage_ratio,
                 )
@@ -1053,7 +1087,7 @@ def _wait_for_submission_snapshot(
             else:
                 initial_cash = float(initial_cash_value)
                 target_principal = int(target_value)
-            maximum_initial_target = floor_principal(
+            maximum_initial_target = floor_principal_after_commission(
                 initial_cash,
                 cash_usage_ratio,
             )
@@ -1889,7 +1923,7 @@ def _remaining_order_principal(
     remaining_target = max(target - cumulative, 0)
     principal = min(
         remaining_target,
-        floor_principal(effective_cash, 1.0),
+        floor_principal_after_commission(effective_cash, 1.0),
     )
     principal -= principal % PRINCIPAL_STEP_YUAN
     return principal, effective_cash

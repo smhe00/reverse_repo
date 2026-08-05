@@ -18,14 +18,14 @@ from repo_execution_core import (
 from repo_execution_state_machine import verify_state_machines
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MANIFEST_KIND = "reverse_repo_live_enable_manifest"
 
 
 def create_live_enable_manifest(
     *,
     strategy_config: Path,
-    simulation_certificate: Path,
+    live_channel_certificate: Path,
     signing_key: Path,
     now: datetime | None = None,
     verification: Mapping[str, Any] | None = None,
@@ -47,8 +47,8 @@ def create_live_enable_manifest(
         "strategy_config_sha256": reverse_repo_strategy_config_sha256(
             strategy_config
         ),
-        "simulation_certificate_sha256": _file_sha256(
-            simulation_certificate
+        "live_channel_certificate_sha256": _file_sha256(
+            live_channel_certificate
         ),
         "transition_spec_sha256": str(
             formal["transition_spec_sha256"]
@@ -73,7 +73,7 @@ def verify_live_enable_manifest(
     *,
     manifest_path: Path,
     strategy_config: Path,
-    simulation_certificate: Path,
+    live_channel_certificate: Path,
     signing_key: Path,
     verification: Mapping[str, Any] | None = None,
     runtime_sha256: str | None = None,
@@ -96,8 +96,8 @@ def verify_live_enable_manifest(
         raise RuntimeError(
             "live configuration hash changed after rr on"
         )
-    if manifest.get("simulation_certificate_sha256") != _file_sha256(
-        simulation_certificate
+    if manifest.get("live_channel_certificate_sha256") != _file_sha256(
+        live_channel_certificate
     ):
         raise RuntimeError(
             "simulation certificate changed after rr on"
@@ -186,13 +186,13 @@ def main() -> int:
     for command in ("create", "verify"):
         child = subparsers.add_parser(command)
         child.add_argument("--strategy-config", required=True)
-        child.add_argument("--simulation-certificate", required=True)
+        child.add_argument("--live-channel-certificate", required=True)
         child.add_argument("--signing-key", required=True)
         child.add_argument("--manifest", required=True)
     args = parser.parse_args()
     arguments = {
         "strategy_config": Path(args.strategy_config),
-        "simulation_certificate": Path(args.simulation_certificate),
+        "live_channel_certificate": Path(args.live_channel_certificate),
         "signing_key": Path(args.signing_key),
     }
     if args.command == "create":

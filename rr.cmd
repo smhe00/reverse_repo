@@ -64,46 +64,55 @@ if /I "%~1"=="mt" (
     "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action TestMail
     exit /b !ERRORLEVEL!
 )
-if /I "%~1"=="reset" (
-    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action ResetCertificate
-    exit /b !ERRORLEVEL!
-)
 if /I "%~1"=="cert" (
-    if /I "%~2"=="live" (
-        if /I "%~3"=="stat" (
-            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCertStatus
-        ) else if /I "%~3"=="reset" (
-            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCertReset
-        ) else if "%~3"=="" (
-            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCert
-        ) else (
-            echo Unknown live certification argument: %~3
-            exit /b 2
-        )
-    ) else if /I "%~2"=="off" (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action CertDisable
-    ) else if /I "%~2"=="del" (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action CertRemove
-    ) else if /I "%~2"=="stat" (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action CertStatus
+    if /I "%~2"=="stat" (
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCertStatus
+    ) else if /I "%~2"=="reset" (
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCertReset
     ) else if "%~2"=="" (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Cert
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action LiveCert
     ) else (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Cert -CertDate "%~2"
+        echo Unknown certification argument: %~2
+        echo Supported: stat, reset
+        exit /b 2
     )
     exit /b !ERRORLEVEL!
 )
-if /I "%~1"=="stress" (
-    if /I "%~2"=="off" (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action StressDisable
-    ) else if /I "%~2"=="del" (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action StressRemove
-    ) else if /I "%~2"=="stat" (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action StressStatus
-    ) else if "%~2"=="" (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Stress
+if /I "%~1"=="dev" (
+    if /I "%~2"=="bind" (
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevBind
+    ) else if /I "%~2"=="status" (
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevStatus
+    ) else if /I "%~2"=="cert" (
+        if /I "%~3"=="stat" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevCertStatus
+        ) else if /I "%~3"=="off" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevCertDisable
+        ) else if /I "%~3"=="del" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevCertRemove
+        ) else if /I "%~3"=="reset" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevCertReset
+        ) else if "%~3"=="" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevCert
+        ) else (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevCert -CertDate "%~3"
+        )
+    ) else if /I "%~2"=="stress" (
+        if /I "%~3"=="stat" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevStressStatus
+        ) else if /I "%~3"=="off" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevStressDisable
+        ) else if /I "%~3"=="del" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevStressRemove
+        ) else if "%~3"=="" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevStress
+        ) else (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevStress -StressDate "%~3"
+        )
     ) else (
-        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Stress -StressDate "%~2"
+        echo Unknown developer argument: %~2
+        echo Supported: bind, status, cert [date|stat|off|del|reset], stress [date|stat|off|del]
+        exit /b 2
     )
     exit /b !ERRORLEVEL!
 )

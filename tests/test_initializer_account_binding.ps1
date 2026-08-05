@@ -23,7 +23,6 @@ function Read-Host { return "n" }
 
 $result = @(
     Initialize-AccountBinding `
-        -Environment "live" `
         3>$null `
         6>$null
 )

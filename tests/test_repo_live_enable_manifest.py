@@ -57,7 +57,7 @@ class LiveEnableManifestTests(unittest.TestCase):
         config, certificate, key, manifest = self._files(directory)
         payload = create_live_enable_manifest(
             strategy_config=config,
-            simulation_certificate=certificate,
+            live_channel_certificate=certificate,
             signing_key=key,
             now=datetime(2026, 8, 3, 8, 0, tzinfo=timezone.utc),
             verification=VERIFICATION,
@@ -72,12 +72,13 @@ class LiveEnableManifestTests(unittest.TestCase):
             verified = verify_live_enable_manifest(
                 manifest_path=manifest,
                 strategy_config=config,
-                simulation_certificate=certificate,
+                live_channel_certificate=certificate,
                 signing_key=key,
                 verification=VERIFICATION,
                 runtime_sha256=RUNTIME_HASH,
             )
             self.assertEqual(verified["strategy_config"]["first_cash_usage_ratio"], 0.9)
+            self.assertEqual(verified["schema_version"], 2)
 
     def test_valid_ratio_change_after_enable_is_rejected(self):
         with TemporaryDirectory() as directory:
@@ -89,7 +90,7 @@ class LiveEnableManifestTests(unittest.TestCase):
                 verify_live_enable_manifest(
                     manifest_path=manifest,
                     strategy_config=config,
-                    simulation_certificate=certificate,
+                    live_channel_certificate=certificate,
                     signing_key=key,
                     verification=VERIFICATION,
                     runtime_sha256=RUNTIME_HASH,
@@ -105,7 +106,7 @@ class LiveEnableManifestTests(unittest.TestCase):
                 verify_live_enable_manifest(
                     manifest_path=manifest,
                     strategy_config=config,
-                    simulation_certificate=certificate,
+                    live_channel_certificate=certificate,
                     signing_key=key,
                     verification=VERIFICATION,
                     runtime_sha256=RUNTIME_HASH,
@@ -119,7 +120,7 @@ class LiveEnableManifestTests(unittest.TestCase):
                 verify_live_enable_manifest(
                     manifest_path=manifest,
                     strategy_config=config,
-                    simulation_certificate=certificate,
+                    live_channel_certificate=certificate,
                     signing_key=key,
                     verification=VERIFICATION,
                     runtime_sha256=RUNTIME_HASH,
@@ -132,7 +133,7 @@ class LiveEnableManifestTests(unittest.TestCase):
                 verify_live_enable_manifest(
                     manifest_path=manifest,
                     strategy_config=config,
-                    simulation_certificate=certificate,
+                    live_channel_certificate=certificate,
                     signing_key=key,
                     verification=VERIFICATION,
                     runtime_sha256=RUNTIME_HASH,
@@ -147,7 +148,7 @@ class LiveEnableManifestTests(unittest.TestCase):
                 verify_live_enable_manifest(
                     manifest_path=manifest,
                     strategy_config=config,
-                    simulation_certificate=certificate,
+                    live_channel_certificate=certificate,
                     signing_key=key,
                     verification=changed,
                     runtime_sha256=RUNTIME_HASH,
@@ -156,7 +157,7 @@ class LiveEnableManifestTests(unittest.TestCase):
                 verify_live_enable_manifest(
                     manifest_path=manifest,
                     strategy_config=config,
-                    simulation_certificate=certificate,
+                    live_channel_certificate=certificate,
                     signing_key=key,
                     verification=VERIFICATION,
                     runtime_sha256="5" * 64,
@@ -174,7 +175,7 @@ class LiveEnableManifestTests(unittest.TestCase):
                     "Assert-ReverseRepoLiveEnableManifest"
                 )
                 qmt_resolution = source.index(
-                    "Get-ReverseRepoQmtPath -Environment \"live\""
+                    "Get-ReverseRepoLiveQmtPath"
                 )
                 self.assertLess(manifest_check, qmt_resolution)
 

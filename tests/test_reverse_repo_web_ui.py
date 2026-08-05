@@ -102,6 +102,18 @@ class ReverseRepoWebUiTests(unittest.TestCase):
         self.assertNotIn("--maximum-principal-yuan", command)
         self.assertIs(kwargs["shell"], False)
 
+    def test_live_cert_reset_requires_exact_phrase_and_dispatches_reset(self):
+        with self.assertRaises(PermissionError):
+            self.application.run_action("live_cert_reset", "revoke live cert")
+        result = self.application.run_action(
+            "live_cert_reset",
+            "REVOKE LIVE CERT",
+        )
+        self.assertTrue(result["ok"])
+        command, kwargs = self.runner.calls[-1]
+        self.assertEqual(command[-2:], ["-Action", "LiveCertReset"])
+        self.assertIs(kwargs["shell"], False)
+
     def test_status_output_is_reduced_to_structured_task_fields(self):
         output = """
 TaskName              : miniQMT Reverse Repo First

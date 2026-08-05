@@ -106,18 +106,19 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             ROOT / "scripts" / "initialize_reverse_repo.ps1"
         ).read_text(encoding="utf-8")
         self.assertIn('"D:\\国金证券QMT交易端"', initializer)
-        self.assertIn('"D:\\国金QMT交易端模拟"', initializer)
         self.assertIn('Join-Path $installRoot "userdata_mini"', initializer)
         self.assertIn("勾选【独立交易】并登录一次", initializer)
         self.assertIn("输入Y重试，输入N退出", initializer)
         self.assertIn("两个路径可能填反了", initializer)
         self.assertIn("Get-RunningMiniQmtInstallRoot", initializer)
         self.assertIn("Name='XtMiniQmt.exe'", initializer)
+        self.assertIn(".\\rr ui", initializer)
         self.assertIn("-DetectedInstallRoot $detectedLiveRoot", initializer)
-        self.assertIn(
+        self.assertNotIn(
             "-DetectedInstallRoot $detectedSimulationRoot",
             initializer,
         )
+        self.assertNotIn('"D:\\国金QMT交易端模拟"', initializer)
         self.assertNotIn('Prompt "实盘miniQMT路径"', initializer)
 
     def test_account_binding_returns_only_a_boolean_success_value(self):
@@ -156,19 +157,12 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         initializer = (
             ROOT / "scripts" / "initialize_reverse_repo.ps1"
         ).read_text(encoding="utf-8-sig")
-        stress = (
-            ROOT / "scripts" / "install_repo_simulation_stress_task.ps1"
-        ).read_text(encoding="utf-8-sig")
         verifier = (ROOT / "verify.ps1").read_text(encoding="utf-8-sig")
         self.assertIn("function Read-ReverseRepoJson", runtime)
         self.assertIn("System.Text.UTF8Encoding($false, $true)", runtime)
         self.assertIn(
             "Read-ReverseRepoJson -Path $runtimeConfigPath",
             initializer,
-        )
-        self.assertIn(
-            "Read-ReverseRepoJson -Path $simulationBindingPath",
-            stress,
         )
         self.assertIn("test_windows_powershell_utf8_json.ps1", verifier)
 
@@ -185,18 +179,44 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
     def test_rr_cert_dispatches_all_supported_operations(self):
         command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
         self.assertIn('if /I "%~1"=="cert"', command)
-        self.assertIn("-Action Cert -CertDate", command)
-        self.assertIn("-Action CertStatus", command)
-        self.assertIn("-Action CertDisable", command)
-        self.assertIn("-Action CertRemove", command)
         self.assertIn("-Action LiveCert", command)
         self.assertIn("-Action LiveCertStatus", command)
         self.assertIn("-Action LiveCertReset", command)
+        self.assertIn('if /I "%~1"=="dev"', command)
+        self.assertIn("-Action DevBind", command)
+        self.assertIn("-Action DevCert -CertDate", command)
+        self.assertIn("-Action DevStress -StressDate", command)
+        self.assertIn("-Action DevStatus", command)
+        self.assertNotIn("-Action Cert -CertDate", command)
+        self.assertNotIn('if /I "%~1"=="stress"', command)
+        self.assertNotIn("-Action ResetCertificate", command)
         manager = (
             ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"
         ).read_text(encoding="utf-8")
         self.assertIn('"LiveCertPreflight"', manager)
         self.assertIn("Invoke-LiveChannelCertificationPreflight", manager)
+        self.assertIn('"DevCertStatus"', manager)
+        self.assertIn('"DevStressStatus"', manager)
+        self.assertIn("Connect-DeveloperSimulationBinding", manager)
+        self.assertNotIn('"CertStatus"', manager)
+        self.assertNotIn('"StressStatus"', manager)
+        self.assertNotIn('"ResetCertificate"', manager)
+
+    def test_live_certification_archives_stale_evidence_on_success(self):
+        wrapper = (
+            ROOT / "scripts" / "run_repo_live_channel_validation.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Archive stale certification evidence", wrapper)
+        self.assertIn("$keepPaths", wrapper)
+        self.assertIn("$staleItems", wrapper)
+        self.assertIn("revoked", wrapper)
+        validator = (
+            ROOT / "scripts" / "repo_live_channel_validation.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("notify-success", validator)
+        self.assertIn("notify_journal_certification", validator)
+        self.assertIn("operational guard", wrapper)
+        self.assertIn("A live-channel certificate already exists", wrapper)
 
     def test_rr_cfg_is_transactional_and_requires_live_tasks_off(self):
         command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
@@ -248,6 +268,8 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn('LOOPBACK_HOST = "127.0.0.1"', server)
         self.assertNotIn('"0.0.0.0"', server)
         self.assertIn("ACTION_SPECS", server)
+        self.assertNotIn('"verify": ActionSpec', server)
+        self.assertIn('"live_cert_reset": ActionSpec', server)
         self.assertIn("X-RR-Token", server)
         self.assertIn("Invalid request origin", server)
         self.assertIn("shell=False", server)
@@ -257,6 +279,14 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("A background operation is still running", server)
         self.assertIn('window.location.replace("about:blank")', frontend)
         self.assertIn("renderTaskStatus", frontend)
+        self.assertIn("REVOKE LIVE CERT", frontend)
+        self.assertIn("撤销实盘认证", frontend)
+        self.assertIn("已存在实盘认证证书", frontend)
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("cli-hint", html)
+        self.assertIn("rr on", html)
+        self.assertIn("rr cert stat", html)
+        self.assertIn("rr cert reset", html)
         self.assertIn("[switch]$NonInteractiveConfirmed", configurator)
         for name in ("index.html", "app.js", "style.css"):
             self.assertTrue((ROOT / "web" / name).is_file())
@@ -286,19 +316,23 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertNotIn("Stop-ScheduledTask", manager)
         self.assertIn(".\\rr clear", readme)
 
-    def test_manager_help_puts_live_commands_before_simulation_tools(self):
+    def test_manager_help_keeps_only_live_certification_commands(self):
         manager = (
             ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"
         ).read_text(encoding="utf-8")
         live = manager.index("【实盘任务：关键命令】")
-        certification = manager.index("【完整模拟能力认证：可选的高强度认证】")
-        stress = manager.index("【一次性模拟压力测试：不替代能力认证】")
+        certification = manager.index("【快速实盘通道认证：固定1000元】")
         mail = manager.index("【邮件与帮助】")
         self.assertLess(live, certification)
-        self.assertLess(certification, stress)
-        self.assertLess(stress, mail)
-        self.assertIn('"CertStatus"', manager)
+        self.assertLess(certification, mail)
+        self.assertNotIn("【完整模拟能力认证", manager)
+        self.assertNotIn("【一次性模拟压力测试", manager)
+        self.assertIn("【开发者模拟验证与压力测试", manager)
         self.assertIn("Get-SimulationCertificationTaskStatus", manager)
+        self.assertIn("Get-SimulationStressTaskStatus", manager)
+        self.assertIn("Reset-SimulationCertificate", manager)
+        self.assertIn("Install-SimulationCertificationTasks", manager)
+        self.assertIn("Install-SimulationStressTask", manager)
 
     def test_rr_on_reconciles_tasks_before_arming_live_execution(self):
         manager = (
@@ -367,14 +401,9 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         quick = readme.index("## 快速开始（Getting Started）")
         commands = readme.index("## 命令参考（熟悉流程后使用）")
         configuration = readme.index("## 策略配置")
-        maintenance = readme.index("## 附录F：底层维护入口")
-        long_command = readme.index(
-            "install_repo_simulation_validation_tasks.ps1"
-        )
         self.assertLess(core, quick)
         self.assertLess(quick, commands)
         self.assertLess(commands, configuration)
-        self.assertGreater(long_command, maintenance)
         for number in range(1, 8):
             self.assertIn(f'<a id="quick-step-{number}"></a>', readme)
         self.assertIn("#details-config", readme)
@@ -383,25 +412,29 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("#details-strategy", readme)
         self.assertIn("#details-init", readme)
         self.assertIn(".\\rr cert stat", readme)
+        self.assertNotIn(
+            "install_repo_simulation_validation_tasks.ps1",
+            readme,
+        )
 
-    def test_quick_start_requires_interactive_config_review_and_validation(self):
+    def test_quick_start_is_ui_first_and_keeps_safety_review(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         quick = readme[
             readme.index("## 快速开始（Getting Started）"):
             readme.index("## 命令参考（熟悉流程后使用）")
         ]
-        manual = quick.index("第3步：交互检查并修改策略参数（必做）")
-        validation = quick.index("第4步：应用配置并完成本地验证")
-        certification = quick.index("第5步：选择一种认证方式")
+        manual = quick.index("第3步：在网页控制台检查并保存四项参数（必做）")
+        validation = quick.index("第4步：在页面复核状态")
+        certification = quick.index("第5步：完成1000元实盘快速认证")
         self.assertLess(manual, validation)
         self.assertLess(validation, certification)
-        self.assertIn(".\\rr cfg", quick)
-        self.assertIn(".\\rr cert live", quick)
+        self.assertIn(".\\rr ui", quick)
+        self.assertIn("怎么打开网页控制台", quick)
+        self.assertIn("验证并保存参数", quick)
         self.assertIn("LIVE 1000", quick)
         self.assertIn("自动运行", quick)
-        self.assertIn("要求输入`Y`保存", quick)
-        self.assertIn("输入`N`或`Q`取消", quick)
-        self.assertIn("原配置会自动恢复", quick)
+        self.assertIn("自动恢复原配置", quick)
+        self.assertIn("ENABLE LIVE", quick)
         for field in (
             "first_execution_time",
             "first_cash_usage_ratio",
@@ -411,6 +444,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
             self.assertIn(field, quick)
         self.assertIn("完整`verify.ps1`", quick)
         self.assertIn("此时必须停下来，由人逐项核对", quick)
+        self.assertNotIn(".\\rr cfg", quick)
 
     def test_readme_offers_no_git_single_command_install(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -439,7 +473,9 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn('`off`是“暂停并保留”', commands)
         self.assertIn('`del`是“只删实盘”', commands)
         self.assertIn('`clear`是“清空', commands)
-        self.assertIn("不影响模拟认证、压力或只读任务", commands)
+        self.assertIn("不影响只读或历史任务", commands)
+        self.assertNotIn("模拟认证", commands)
+        self.assertNotIn("压力测试", commands)
         self.assertIn("本项目已知的全部计划任务", commands)
 
     def test_readme_hides_internal_qmt_connection_directory(self):
@@ -457,6 +493,8 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("Assert-SafeArchive", installer)
         self.assertIn("reverse_repo-latest.zip.sha256", installer)
         self.assertIn('"rr.cmd") init', installer)
+        self.assertIn("[switch]$SkipUi", installer)
+        self.assertIn('"rr.cmd") ui', installer)
         self.assertIn("git.exe", builder)
         self.assertIn("ls-files", builder)
         self.assertIn("[switch]$Check", builder)
@@ -468,7 +506,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         repository = readme.index("https://gitee.com/smhe/reverse_repo")
         strategy = readme.index("## 核心策略")
-        pdf_instructions = readme.index("## 附录H：README与PDF生成")
+        pdf_instructions = readme.index("## 附录G：README与PDF生成")
         disclaimer = readme.index("## 免责声明")
         self.assertLess(repository, strategy)
         self.assertLess(pdf_instructions, disclaimer)

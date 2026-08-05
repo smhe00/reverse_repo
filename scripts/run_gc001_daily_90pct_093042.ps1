@@ -25,7 +25,7 @@ if ($morningCashUsageRatio -eq 0) {
 # Fail closed before resolving a QMT path or opening a broker connection.
 Assert-ReverseRepoLiveEnableManifest
 if ([string]::IsNullOrWhiteSpace($QmtPath)) {
-    $QmtPath = Get-ReverseRepoQmtPath -Environment "live"
+$QmtPath = Get-ReverseRepoLiveQmtPath
 }
 
 if ([string]::IsNullOrWhiteSpace($AccountBinding)) {
