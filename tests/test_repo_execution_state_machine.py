@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -81,8 +82,11 @@ class ExhaustiveStateMachineVerificationTests(unittest.TestCase):
         self.assertTrue(
             commit is None or re.fullmatch(r"[0-9a-f]{40}", commit)
         )
-        self.assertIsNotNone(execution_source_commit())
 
+    @unittest.skipUnless(
+        shutil.which("git") is not None,
+        "git is not installed in this no-Git deployment",
+    )
     def test_execution_source_tree_clean_check_detects_uncommitted_changes(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

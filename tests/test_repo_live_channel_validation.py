@@ -232,6 +232,9 @@ class LiveChannelValidationTests(unittest.TestCase):
             ), mock.patch(
                 "repo_live_channel_validation.machine_fingerprint",
                 return_value="machine",
+            ), mock.patch(
+                "repo_live_channel_validation.verify_state_machines",
+                return_value={"execution_source_commit": "b" * 40},
             ):
                 verify_live_channel_certificate(
                     certificate=certificate,
