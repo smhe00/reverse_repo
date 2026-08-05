@@ -223,7 +223,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         configurator_path = (
             ROOT / "scripts" / "configure_reverse_repo_strategy.ps1"
         )
-        configurator = configurator_path.read_text(encoding="ascii")
+        configurator = configurator_path.read_text(encoding="utf-8-sig")
         execution_spec = (
             ROOT / "scripts" / "repo_execution_state_machine.py"
         ).read_text(encoding="utf-8")
@@ -261,7 +261,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         frontend = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
         configurator = (
             ROOT / "scripts" / "configure_reverse_repo_strategy.ps1"
-        ).read_text(encoding="ascii")
+        ).read_text(encoding="utf-8-sig")
         self.assertIn('if /I "%~1"=="ui"', command)
         self.assertIn("run_reverse_repo_web_ui.ps1", command)
         self.assertIn("reverse_repo_web_ui.py", wrapper)

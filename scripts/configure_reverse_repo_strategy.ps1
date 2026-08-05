@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$FirstExecutionTime = "",
     [string]$FirstCashUsageRatio = "",
@@ -490,12 +490,48 @@ try {
 
     Write-Output "Running full local verification..."
     $windowsPowerShell = Get-ReverseRepoPowerShell
-    & $windowsPowerShell `
-        -NoProfile `
-        -ExecutionPolicy Bypass `
-        -File $verifyPath
-    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+    $verifyLogDirectory = Join-Path $repoRoot "logs"
+    New-Item -ItemType Directory -Force -Path $verifyLogDirectory | Out-Null
+    $verifyLogPath = Join-Path `
+        $verifyLogDirectory `
+        ("strategy_verify_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
+    $verifyOutput = @(
+        & $windowsPowerShell `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $verifyPath *>&1 |
+            ForEach-Object { Out-String -InputObject $_ -Width 4096 }
+    )
+    $verifyExit = $LASTEXITCODE
+    $verifyOutput | Set-Content -LiteralPath $verifyLogPath -Encoding UTF8
+    if ($null -eq $verifyExit -or [int]$verifyExit -ne 0) {
+        Write-Output "本地验证失败，完整日志：$verifyLogPath"
+        Write-Output "--- 失败输出（末尾 30 行）---"
+        $verifyOutput | Select-Object -Last 30
         throw "Verification failed for the candidate parameters."
+    }
+    Write-Output "本地验证通过，完整日志：$verifyLogPath"
+    $stageLabels = [ordered]@{
+        "compatibility passed" = "Windows PowerShell 5.1 兼容性"
+        "install-root discovery" = "QMT 路径解析"
+        "Boolean gate test passed" = "账户绑定门禁"
+        "UTF-8 JSON test passed" = "UTF-8 JSON"
+        "configuration tests passed" = "策略配置事务"
+        "update and rollback tests passed" = "无Git更新/回滚"
+        "isolation test passed" = "Python 隔离"
+        "Runtime parameters valid" = "运行时参数"
+        "Ran \d+ tests" = "单元测试"
+        "Release package verification passed" = "发布包校验"
+        "reverse_repo verification passed" = "整体验证"
+    }
+    foreach ($line in $verifyOutput) {
+        $trimmed = $line.Trim()
+        foreach ($marker in $stageLabels.Keys) {
+            if ($trimmed -match $marker) {
+                Write-Output "  ✓ $($stageLabels[$marker])"
+                break
+            }
+        }
     }
 
     # Prevent a concurrent rr on from winning while verification was running.
