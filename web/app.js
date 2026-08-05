@@ -28,6 +28,16 @@ let token = "";
 let defaults = null;
 let busy = false;
 
+// Pressing Enter inside the confirmation phrase input must confirm the
+// action, never cancel. Without this, the dialog form's implicit submission
+// can activate whichever submit button comes first in the document.
+elements.dialogPhrase.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    elements.dialogAccept.click();
+  }
+});
+
 function loadToken() {
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   const incoming = hash.get("token");
