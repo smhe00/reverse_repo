@@ -281,6 +281,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("renderTaskStatus", frontend)
         self.assertIn("REVOKE LIVE CERT", frontend)
         self.assertIn("撤销实盘认证", frontend)
+        self.assertIn("当前没有实盘认证证书，无需撤销", frontend)
         self.assertIn("已存在实盘认证证书", frontend)
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         self.assertIn("cli-hint", html)

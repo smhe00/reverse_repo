@@ -27,6 +27,7 @@ const elements = {
 let token = "";
 let defaults = null;
 let busy = false;
+let certificationStatus = null;
 
 // Pressing Enter inside the confirmation phrase input must confirm the
 // action, never cancel. Without this, the dialog form's implicit submission
@@ -166,6 +167,7 @@ function renderTaskStatus(tasks, statusOk) {
 }
 
 function renderCertification(status) {
+  certificationStatus = status || null;
   const valid = String(status?.valid || "false") === "true";
   elements.certificateStatus.className = `certificate-status ${valid ? "valid" : "invalid"}`;
   elements.certificateStatus.replaceChildren();
@@ -234,6 +236,14 @@ async function runAction(action) {
   if (busy) return;
   const detail = actionDetails[action];
   if (!detail) return;
+  if (action === "live_cert_reset") {
+    const summary = String(certificationStatus?.summary || "");
+    if (summary.includes("不存在")) {
+      elements.operationOutput.textContent =
+        "当前没有实盘认证证书，无需撤销。";
+      return;
+    }
+  }
   if (action === "live_cert") {
     setBusy(true, "正在执行实盘只读预检；不会下单…");
     try {
