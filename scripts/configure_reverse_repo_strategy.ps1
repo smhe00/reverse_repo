@@ -538,7 +538,7 @@ try {
         $trimmed = $line.Trim()
         foreach ($marker in $stageLabels.Keys) {
             if ($trimmed -match $marker) {
-                Write-Output "  ✓ $($stageLabels[$marker])"
+                Write-Output "  [OK] $($stageLabels[$marker])"
                 break
             }
         }
