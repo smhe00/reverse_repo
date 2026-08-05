@@ -227,6 +227,22 @@ class LiveChannelValidationTests(unittest.TestCase):
                     expected_source_hash="source",
                     expected_runtime_hash="runtime",
                 )
+                moved = dict(certificate)
+                moved["execution_source_commit"] = "a" * 40
+                moved["signature_hmac_sha256"] = sign_payload(
+                    moved, bytes.fromhex("ab" * 32)
+                )
+                with self.assertRaisesRegex(RuntimeError, "commit changed"):
+                    verify_live_channel_certificate(
+                        certificate=moved,
+                        certificate_path=cert_path,
+                        signing_key=key_path,
+                        qmt_path=root,
+                        account_binding=root / "binding.json",
+                        expected_transition_hash="transition",
+                        expected_source_hash="source",
+                        expected_runtime_hash="runtime",
+                    )
                 forged = dict(certificate)
                 forged["filled_principal_yuan"] = 500
                 forged["signature_hmac_sha256"] = sign_payload(

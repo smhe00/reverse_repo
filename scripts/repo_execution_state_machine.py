@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import subprocess
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
@@ -713,6 +715,7 @@ def verify_state_machines() -> dict[str, object]:
         "method": "exhaustive explicit-state reachability to fixed point",
         "transition_spec_sha256": digest,
         "execution_source_sha256": execution_source_sha256(),
+        "execution_source_commit": execution_source_commit(),
         "morning": morning,
         "afternoon": afternoon,
         "proved_invariants": [
@@ -739,9 +742,59 @@ def execution_source_sha256() -> str:
         path = root / name
         digest.update(name.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        digest.update(_normalize_source_bytes(path.read_bytes()))
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _normalize_source_bytes(data: bytes) -> bytes:
+    """Canonicalize line endings so editors never change the source hash."""
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def execution_source_commit() -> str | None:
+    """Return the current git commit (or None for no-Git installations)."""
+    if not (_repo_root() / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(_repo_root()),
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = result.stdout.decode("ascii", errors="replace").strip()
+    return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
+def execution_source_tree_is_clean(
+    root: Path | None = None,
+) -> bool:
+    """True when no protected execution source has uncommitted changes."""
+    root = _repo_root() if root is None else Path(root)
+    if not (root / ".git").exists():
+        return True
+    paths = [
+        "scripts/" + name
+        for name in EXECUTION_SOURCE_FILES
+    ]
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--quiet", "HEAD", "--"] + paths,
+            cwd=str(root),
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 def snapshot_to_payload(snapshot: MachineSnapshot[Enum]) -> dict[str, object]:

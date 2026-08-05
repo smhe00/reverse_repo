@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
+import subprocess
 import sys
 import unittest
 from collections import deque
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -30,9 +33,12 @@ from repo_execution_state_machine import (  # noqa: E402
     advance_afternoon,
     advance_morning,
     afternoon_snapshot_from_payload,
+    execution_source_commit,
+    execution_source_tree_is_clean,
     initial_afternoon_snapshot,
     initial_morning_snapshot,
     morning_snapshot_from_payload,
+    _normalize_source_bytes,
     snapshot_to_payload,
     verify_state_machines,
 )
@@ -58,6 +64,53 @@ def _execute_every_declared_edge(
 
 
 class ExhaustiveStateMachineVerificationTests(unittest.TestCase):
+    def test_source_hash_ignores_line_endings(self):
+        payload = (
+            b"def f():\n    return 1\n"
+        )
+        self.assertEqual(
+            _normalize_source_bytes(payload),
+            _normalize_source_bytes(
+                payload.replace(b"\n", b"\r\n")
+            ),
+        )
+        self.assertNotIn(b"\r", _normalize_source_bytes(payload))
+
+    def test_execution_source_commit_is_current_head_in_git_checkout(self):
+        commit = execution_source_commit()
+        self.assertTrue(
+            commit is None or re.fullmatch(r"[0-9a-f]{40}", commit)
+        )
+        self.assertIsNotNone(execution_source_commit())
+
+    def test_execution_source_tree_clean_check_detects_uncommitted_changes(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "test"],
+                cwd=root,
+                check=True,
+            )
+            scripts = root / "scripts"
+            scripts.mkdir()
+            target = scripts / "repo_failure_alert.py"
+            target.write_text("x = 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "init"],
+                cwd=root,
+                check=True,
+            )
+            self.assertTrue(execution_source_tree_is_clean(root))
+            target.write_text("x = 2\n", encoding="utf-8")
+            self.assertFalse(execution_source_tree_is_clean(root))
+
     def test_formal_verifier_reaches_fixed_point_without_violation(self):
         result = verify_state_machines()
         for name in ("morning", "afternoon"):

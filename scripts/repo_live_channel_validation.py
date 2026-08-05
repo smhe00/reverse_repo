@@ -29,7 +29,10 @@ from repo_execution_core import (
     unresolved_repo_orders,
     xtquant_runtime_sha256,
 )
-from repo_execution_state_machine import verify_state_machines
+from repo_execution_state_machine import (
+    execution_source_tree_is_clean,
+    verify_state_machines,
+)
 
 
 CERTIFICATE_TYPE = "live_channel"
@@ -356,6 +359,11 @@ def certify_live_channel(
     )
     orders = query_live_orders(qmt_path=qmt_path, account_binding=account_binding)
     verification = verify_state_machines()
+    if not execution_source_tree_is_clean():
+        raise RuntimeError(
+            "uncommitted changes to protected execution sources; "
+            "commit or revert them before certification"
+        )
     evidence, checks = validate_live_channel_evidence(
         journal=journal,
         broker_orders=orders,
@@ -373,6 +381,9 @@ def certify_live_channel(
         "passed": all(checks.values()),
         "transition_spec_sha256": verification["transition_spec_sha256"],
         "execution_source_sha256": verification["execution_source_sha256"],
+        "execution_source_commit": verification.get(
+            "execution_source_commit"
+        ),
         "xtquant_runtime_sha256": xtquant_runtime_sha256(),
         "account_id_fingerprint": binding.account_id_fingerprint,
         "qmt_path_fingerprint": binding.qmt_path_fingerprint,
@@ -533,6 +544,18 @@ def verify_live_channel_certificate(
         raise RuntimeError("state-machine hash changed")
     if certificate.get("execution_source_sha256") != source_hash:
         raise RuntimeError("execution source hash changed")
+    certified_commit = str(
+        certificate.get("execution_source_commit") or ""
+    ).strip()
+    current_commit = str(
+        verification.get("execution_source_commit") or ""
+    ).strip()
+    if certified_commit and current_commit:
+        if certified_commit != current_commit:
+            raise RuntimeError(
+                "execution source commit changed (certified "
+                f"{certified_commit[:12]}, now {current_commit[:12]})"
+            )
     if certificate.get("xtquant_runtime_sha256") != runtime_hash:
         raise RuntimeError("XtQuant runtime hash changed")
     binding = load_account_binding(account_binding, environment="live", qmt_path=qmt_path)

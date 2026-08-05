@@ -56,6 +56,9 @@ def create_live_enable_manifest(
         "execution_source_sha256": str(
             formal["execution_source_sha256"]
         ),
+        "execution_source_commit": formal.get(
+            "execution_source_commit"
+        ),
         "xtquant_runtime_sha256": (
             xtquant_runtime_sha256()
             if runtime_sha256 is None
@@ -115,6 +118,18 @@ def verify_live_enable_manifest(
         formal["execution_source_sha256"]
     ):
         raise RuntimeError("execution sources changed after rr on")
+    certified_commit = str(
+        manifest.get("execution_source_commit") or ""
+    ).strip()
+    current_commit = str(
+        formal.get("execution_source_commit") or ""
+    ).strip()
+    if certified_commit and current_commit:
+        if certified_commit != current_commit:
+            raise RuntimeError(
+                "execution source commit changed after rr on "
+                f"(armed {certified_commit[:12]}, now {current_commit[:12]})"
+            )
     current_runtime_hash = (
         xtquant_runtime_sha256()
         if runtime_sha256 is None

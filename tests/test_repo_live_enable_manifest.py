@@ -163,6 +163,35 @@ class LiveEnableManifestTests(unittest.TestCase):
                     runtime_sha256="5" * 64,
                 )
 
+    def test_execution_source_commit_change_after_enable_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            config, certificate, key, manifest = self._files(directory)
+            armed = dict(VERIFICATION)
+            armed["execution_source_commit"] = "a" * 40
+            payload = create_live_enable_manifest(
+                strategy_config=config,
+                live_channel_certificate=certificate,
+                signing_key=key,
+                now=datetime(2026, 8, 3, 8, 0, tzinfo=timezone.utc),
+                verification=armed,
+                runtime_sha256=RUNTIME_HASH,
+            )
+            atomic_write_json(manifest, payload)
+            moved = dict(VERIFICATION)
+            moved["execution_source_commit"] = "b" * 40
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "commit changed",
+            ):
+                verify_live_enable_manifest(
+                    manifest_path=manifest,
+                    strategy_config=config,
+                    live_channel_certificate=certificate,
+                    signing_key=key,
+                    verification=moved,
+                    runtime_sha256=RUNTIME_HASH,
+                )
+
     def test_live_wrappers_verify_manifest_before_resolving_qmt(self):
         scripts = Path(__file__).resolve().parents[1] / "scripts"
         for name in (
