@@ -77,7 +77,7 @@ class ReleaseGateLiveOnlyTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "live enable gate failed",
+                    "实盘启用门禁被拒绝",
                 ):
                     release_gate_main()
 
@@ -138,7 +138,7 @@ class ReleaseGateLiveOnlyTests(unittest.TestCase):
             ) as live:
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "live enable gate failed",
+                    "实盘启用门禁被拒绝",
                 ):
                     release_gate_main()
                 live.assert_not_called()

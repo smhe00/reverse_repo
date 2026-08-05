@@ -608,13 +608,19 @@ function Assert-LiveEnableGate {
         $pythonPath,
         $gateScript,
         $bindingPath,
-        $liveChannelCertificatePath,
         $signingKeyPath,
         $strategyConfigPath
     )) {
         if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
-            throw "Live enable gate file is missing: $requiredPath"
+            throw "实盘启用门禁依赖缺失：$requiredPath"
         }
+    }
+    if (-not (Test-Path -LiteralPath $liveChannelCertificatePath -PathType Leaf)) {
+        throw (
+            "启用实盘被拒绝：还没有实盘快速认证证书。请先在交易日交易时段" +
+            "（09:29:30–11:25:00 或 12:59:30–15:25:00）执行 .\rr cert 完成" +
+            "真实1000元GC001认证，成功后再重新启用实盘。"
+        )
     }
     $gateArguments = @(
         $gateScript,
@@ -626,7 +632,7 @@ function Assert-LiveEnableGate {
     )
     & $pythonPath @gateArguments
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
-        throw "Live enable gate failed."
+        throw "实盘启用门禁被拒绝（详见上方输出）。"
     }
 }
 
@@ -1258,8 +1264,14 @@ switch ($Action) {
         }
     }
     "Enable" {
-        Set-ManagedTasksEnabled -Enabled $true
-        Get-ManagedTaskStatus
+        try {
+            Set-ManagedTasksEnabled -Enabled $true
+            Get-ManagedTaskStatus
+        }
+        catch {
+            Write-Output $_.Exception.Message
+            exit 1
+        }
     }
     "Disable" {
         Set-ManagedTasksEnabled -Enabled $false

@@ -52,8 +52,8 @@ def main() -> int:
         )
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(
-            "live enable gate failed: live-channel certificate "
-            f"invalid: {exc}"
+            "实盘启用门禁被拒绝：实盘快速认证证书无效："
+            f"{exc}"
         ) from exc
     reverse_repo_strategy_config_sha256(Path(args.strategy_config))
     print(
