@@ -8,6 +8,8 @@ import os
 import smtplib
 import ssl
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -17,6 +19,12 @@ from pathlib import Path
 from typing import Any, Protocol
 
 ALERT_PASSWORD_ENV = "MINIQMT_ALERT_SMTP_PASSWORD"
+WXPUSHER_TOKEN_ENV = "MINIQMT_ALERT_WXPUSHER_TOKEN"
+WXPUSHER_SIMPLE_PUSH_URL = (
+    "https://wxpusher.zjiecode.com/api/send/message/simple-push"
+)
+WXPUSHER_SUMMARY_MAX_CHARACTERS = 100
+WXPUSHER_CONTENT_MAX_CHARACTERS = 40_000
 ALERT_CONFIG_SCHEMA_VERSION = 1
 MAXIMUM_ALERT_ATTEMPTS = 5
 MAXIMUM_ALERT_TIMEOUT_SECONDS = 30.0
@@ -94,6 +102,13 @@ class SmtpAlertConfig:
 
 
 @dataclass(frozen=True)
+class WxPusherAlertConfig:
+    spt: str
+    timeout_seconds: float
+    attempts: int
+
+
+@dataclass(frozen=True)
 class AlertDelivery:
     key: str
     status: str
@@ -131,6 +146,65 @@ class SmtpFailureNotifier:
             "SMTP alert delivery failed after bounded retries: "
             + " | ".join(errors)
         )
+
+
+class WxPusherFailureNotifier:
+    """Deliver alerts through WxPusher simple-push (SPT) to the owner's WeChat."""
+
+    def __init__(self, config: WxPusherAlertConfig) -> None:
+        self.config = config
+        self.last_attempts = 0
+
+    def send(self, alert: FailureAlert) -> None:
+        errors: list[str] = []
+        for attempt in range(1, self.config.attempts + 1):
+            self.last_attempts = attempt
+            error = _wxpusher_attempt_with_hard_timeout(self.config, alert)
+            if error is None:
+                return
+            errors.append(f"attempt {attempt}: {error}")
+            if attempt < self.config.attempts:
+                time.sleep(min(0.25 * (2 ** (attempt - 1)), 2.0))
+        raise AlertDeliveryError(
+            "WxPusher alert delivery failed after bounded retries: "
+            + " | ".join(errors)
+        )
+
+
+class CompositeNotifier:
+    """Deliver every alert through each configured transport."""
+
+    def __init__(self, notifiers: Sequence[FailureNotifier]) -> None:
+        if not notifiers:
+            raise ValueError("CompositeNotifier requires at least one notifier")
+        self.notifiers = list(notifiers)
+        self.last_attempts = 0
+
+    @property
+    def transport_names(self) -> tuple[str, ...]:
+        return tuple(type(notifier).__name__ for notifier in self.notifiers)
+
+    def send(self, alert: FailureAlert) -> None:
+        errors: list[str] = []
+        delivered = 0
+        self.last_attempts = 0
+        for notifier in self.notifiers:
+            try:
+                notifier.send(alert)
+                delivered += 1
+            except Exception as exc:  # noqa: BLE001
+                errors.append(
+                    f"{type(notifier).__name__}: {type(exc).__name__}: {exc}"
+                )
+            self.last_attempts = max(
+                self.last_attempts,
+                int(getattr(notifier, "last_attempts", 1)),
+            )
+        if delivered == 0:
+            raise AlertDeliveryError(
+                "all notification transports failed: " + " | ".join(errors)
+            )
+
 
 def load_smtp_failure_notifier(
     config_path: Path,
@@ -219,6 +293,89 @@ def load_smtp_failure_notifier(
     )
 
 
+def load_wxpusher_failure_notifier(
+    config_path: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> WxPusherFailureNotifier:
+    path = Path(config_path).resolve()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AlertConfigurationError(
+            f"failure-alert configuration is unreadable: {path}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AlertConfigurationError(
+            "failure-alert configuration root must be an object"
+        )
+    if payload.get("schema_version") != ALERT_CONFIG_SCHEMA_VERSION:
+        raise AlertConfigurationError(
+            "unexpected failure-alert configuration schema"
+        )
+    if payload.get("enabled") is not True:
+        raise AlertConfigurationError("failure-alert WxPusher is not enabled")
+    if payload.get("transport") != "wxpusher":
+        raise AlertConfigurationError(
+            "WxPusher configuration must declare transport 'wxpusher'"
+        )
+    timeout_seconds = _bounded_float(
+        payload.get("timeout_seconds", 10.0),
+        field="timeout_seconds",
+        minimum=1.0,
+        maximum=MAXIMUM_ALERT_TIMEOUT_SECONDS,
+    )
+    attempts = _bounded_int(
+        payload.get("attempts", 3),
+        field="attempts",
+        minimum=1,
+        maximum=MAXIMUM_ALERT_ATTEMPTS,
+    )
+    environment = os.environ if environ is None else environ
+    spt = str(environment.get(WXPUSHER_TOKEN_ENV, "")).strip()
+    if not spt:
+        raise AlertConfigurationError(
+            f"WxPusher SPT token is missing from {WXPUSHER_TOKEN_ENV}"
+        )
+    if (
+        "\r" in spt
+        or "\n" in spt
+        or not spt.startswith("SPT_")
+        or len(spt) > 256
+    ):
+        raise AlertConfigurationError("invalid WxPusher SPT token")
+    return WxPusherFailureNotifier(
+        WxPusherAlertConfig(
+            spt=spt,
+            timeout_seconds=timeout_seconds,
+            attempts=attempts,
+        )
+    )
+
+
+def load_failure_notifier(
+    config_path: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> FailureNotifier:
+    """Load whichever transport a single configuration file declares."""
+    path = Path(config_path).resolve()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AlertConfigurationError(
+            f"failure-alert configuration is unreadable: {path}"
+        ) from exc
+    transport = str(payload.get("transport", "")).strip().lower()
+    if transport == "smtp":
+        return load_smtp_failure_notifier(path, environ=environ)
+    if transport == "wxpusher":
+        return load_wxpusher_failure_notifier(path, environ=environ)
+    raise AlertConfigurationError(
+        f"unsupported failure-alert transport: {transport!r}"
+    )
+
+
 def load_optional_smtp_failure_notifier(
     config_path: Path | None,
     *,
@@ -235,6 +392,61 @@ def load_optional_smtp_failure_notifier(
     except Exception as exc:  # noqa: BLE001
         return None, f"{type(exc).__name__}: {exc}"
     return notifier, None
+
+
+def load_optional_alert_notifiers(
+    config_path: Path | None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[FailureNotifier | None, list[str]]:
+    """Load every configured notification transport best-effort.
+
+    SMTP comes from ``config_path``; WxPusher is discovered as the sibling
+    file ``repo_failure_wxpusher.local.json`` next to it. When both exist,
+    every alert is delivered through both channels; when only one exists,
+    alerts go through that single channel.
+    """
+    warnings: list[str] = []
+    notifiers: list[FailureNotifier] = []
+    if config_path is not None and Path(config_path).is_file():
+        try:
+            notifiers.append(
+                load_smtp_failure_notifier(config_path, environ=environ)
+            )
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"smtp: {type(exc).__name__}: {exc}")
+    else:
+        warnings.append("smtp: failure-alert email is not configured")
+    wxpusher_path = _sibling_wxpusher_config_path(config_path)
+    if wxpusher_path is not None and wxpusher_path.is_file():
+        try:
+            notifiers.append(
+                load_wxpusher_failure_notifier(
+                    wxpusher_path,
+                    environ=environ,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"wxpusher: {type(exc).__name__}: {exc}")
+    else:
+        warnings.append("wxpusher: WxPusher push is not configured")
+    if not notifiers:
+        return None, warnings
+    if len(notifiers) == 1:
+        return notifiers[0], warnings
+    return CompositeNotifier(notifiers), warnings
+
+
+def _sibling_wxpusher_config_path(
+    config_path: Path | None,
+) -> Path | None:
+    if config_path is None:
+        return None
+    return (
+        Path(config_path)
+        .resolve()
+        .with_name("repo_failure_wxpusher.local.json")
+    )
 
 
 def notify_journal_failure(
@@ -455,48 +667,42 @@ def send_standalone_failure(
     notifier.send(alert)
 
 
-def _build_message(
-    config: SmtpAlertConfig,
-    alert: FailureAlert,
-) -> EmailMessage:
+def _build_subject(alert: FailureAlert) -> str:
     successful = alert.kind == "success"
-    environment_label = (
-        "实盘" if alert.environment == "live" else str(alert.environment)
-    )
-    is_test = alert.strategy == "email_alert_configuration_test"
+    is_test = alert.strategy == "notification_configuration_test"
     if is_test:
-        subject = (
-            f"[miniQMT][测试邮件] {alert.trade_date} "
-            "邮件配置测试"
-        )
+        return f"[miniQMT][测试通知] {alert.trade_date} 通知配置测试"
     elif alert.certification and successful:
-        subject = (
+        return (
             f"[miniQMT][实盘认证成功][{alert.environment.upper()}] "
             f"{alert.trade_date} GC001 1000元"
         )
     elif alert.certification:
-        subject = (
+        return (
             f"[miniQMT][实盘认证失败][{alert.environment.upper()}] "
             f"{alert.trade_date}"
         )
     elif successful:
-        subject = (
+        return (
             f"[miniQMT][执行成功][{alert.environment.upper()}] "
             f"{alert.trade_date} 国债逆回购"
         )
-    else:
-        subject = (
-            f"[miniQMT][需人工检查][{alert.environment.upper()}] "
-            f"{alert.trade_date} 国债逆回购"
-        )
-    message = EmailMessage()
-    message["From"] = config.from_address
-    message["To"] = ", ".join(config.to_addresses)
-    message["Subject"] = _clean_header(subject)
+    return (
+        f"[miniQMT][需人工检查][{alert.environment.upper()}] "
+        f"{alert.trade_date} 国债逆回购"
+    )
+
+
+def _build_body_lines(alert: FailureAlert) -> list[str]:
+    successful = alert.kind == "success"
+    environment_label = (
+        "实盘" if alert.environment == "live" else str(alert.environment)
+    )
+    is_test = alert.strategy == "notification_configuration_test"
     details = dict(alert.details or {})
     lines: list[str] = []
     if is_test:
-        lines.append("这是一封邮件配置测试，无需任何处理。")
+        lines.append("这是一条通知配置测试，无需任何处理。")
         lines.append("")
         lines.append(f"测试时间：{alert.occurred_at}")
         lines.append(f"策略：{alert.strategy}")
@@ -565,8 +771,40 @@ def _build_message(
     elif alert.certification and not successful:
         lines.append("")
         lines.append("后续：修复问题后重新执行 rr cert。")
-    message.set_content("\n".join(lines), charset="utf-8")
+    return lines
+
+
+def _build_message(
+    config: SmtpAlertConfig,
+    alert: FailureAlert,
+) -> EmailMessage:
+    message = EmailMessage()
+    message["From"] = config.from_address
+    message["To"] = ", ".join(config.to_addresses)
+    message["Subject"] = _clean_header(_build_subject(alert))
+    message.set_content(
+        "\n".join(_build_body_lines(alert)),
+        charset="utf-8",
+    )
     return message
+
+
+def _build_wxpusher_payload(
+    config: WxPusherAlertConfig,
+    alert: FailureAlert,
+) -> dict[str, object]:
+    content = "\n".join(_build_body_lines(alert))
+    content = content[:WXPUSHER_CONTENT_MAX_CHARACTERS]
+    summary = _bounded_text(
+        _build_subject(alert),
+        WXPUSHER_SUMMARY_MAX_CHARACTERS,
+    )
+    return {
+        "spt": config.spt,
+        "content": content,
+        "summary": summary,
+        "contentType": 1,
+    }
 
 
 def _send_attempt_with_hard_timeout(
@@ -685,6 +923,116 @@ def _smtp_authenticate_and_send(
     )
 
 
+def _wxpusher_attempt_with_hard_timeout(
+    config: WxPusherAlertConfig,
+    alert: FailureAlert,
+) -> str | None:
+    context = multiprocessing.get_context("spawn")
+    parent_connection, child_connection = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_wxpusher_attempt_worker,
+        args=(child_connection, config, alert),
+        daemon=True,
+    )
+    try:
+        process.start()
+        child_connection.close()
+        process.join(config.timeout_seconds + 1.0)
+        if process.is_alive():
+            process.terminate()
+            process.join(2.0)
+            if process.is_alive():
+                process.kill()
+                process.join(2.0)
+            return (
+                f"HardTimeout: WxPusher attempt exceeded "
+                f"{config.timeout_seconds:.1f} seconds"
+            )
+        if parent_connection.poll():
+            ok, detail = parent_connection.recv()
+            return None if ok else str(detail)
+        if process.exitcode == 0:
+            return "WxPusher worker exited without a delivery result"
+        return f"WxPusher worker exited with code {process.exitcode}"
+    except (OSError, RuntimeError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    finally:
+        child_connection.close()
+        parent_connection.close()
+        if process.is_alive():
+            process.terminate()
+            process.join(2.0)
+
+
+def _wxpusher_attempt_worker(
+    connection: Any,
+    config: WxPusherAlertConfig,
+    alert: FailureAlert,
+) -> None:
+    try:
+        _wxpusher_send_once(config, alert)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            connection.send(
+                (
+                    False,
+                    f"{type(exc).__name__}: {_bounded_text(exc, 1_000)}",
+                )
+            )
+        finally:
+            connection.close()
+        return
+    connection.send((True, "sent"))
+    connection.close()
+
+
+def _wxpusher_send_once(
+    config: WxPusherAlertConfig,
+    alert: FailureAlert,
+) -> None:
+    payload = _build_wxpusher_payload(config, alert)
+    request = urllib.request.Request(
+        WXPUSHER_SIMPLE_PUSH_URL,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=config.timeout_seconds,
+        ) as response:
+            raw = response.read(64 * 1024)
+    except urllib.error.HTTPError as exc:
+        detail = _bounded_text(exc.read(2_048), 1_000)
+        raise AlertDeliveryError(
+            f"WxPusher HTTP {exc.code}: {detail or exc.reason}"
+        ) from exc
+    except (OSError, urllib.error.URLError) as exc:
+        raise AlertDeliveryError(
+            f"WxPusher request failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    try:
+        response_payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AlertDeliveryError(
+            f"WxPusher returned a non-JSON response: {exc}"
+        ) from exc
+    if (
+        not isinstance(response_payload, dict)
+        or response_payload.get("code") != 1000
+    ):
+        message = "unexpected response"
+        if isinstance(response_payload, dict):
+            message = _bounded_text(
+                str(response_payload.get("msg", message)),
+                500,
+            )
+        raise AlertDeliveryError(
+            f"WxPusher rejected the message: {message}"
+        )
+
+
 def _previous_delivery(
     payload: Mapping[str, object],
     *,
@@ -798,7 +1146,7 @@ def _test_alert(notifier: FailureNotifier) -> None:
     now = datetime.now().astimezone()
     notifier.send(
         FailureAlert(
-            strategy="email_alert_configuration_test",
+            strategy="notification_configuration_test",
             trade_date=now.date().isoformat(),
             environment="configuration_test",
             state="test",
@@ -813,25 +1161,25 @@ def _test_alert(notifier: FailureNotifier) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Validate or test the miniQMT SMTP failure alert."
+        description="Validate or test the miniQMT failure alert."
     )
     parser.add_argument("--config", required=True)
     parser.add_argument(
         "--test-send",
         action="store_true",
-        help="Send one clearly marked configuration-test email.",
+        help="Send one clearly marked configuration-test notification.",
     )
     args = parser.parse_args(argv)
     try:
-        notifier = load_smtp_failure_notifier(Path(args.config))
+        notifier = load_failure_notifier(Path(args.config))
         if args.test_send:
             _test_alert(notifier)
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {type(exc).__name__}: {exc}")
         return 1
-    print("SMTP failure-alert configuration is valid.")
+    print("Failure-alert configuration is valid.")
     if args.test_send:
-        print("Configuration-test email was sent.")
+        print("Configuration-test notification was sent.")
     return 0
 
 

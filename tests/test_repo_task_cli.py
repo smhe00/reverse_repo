@@ -270,6 +270,8 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("ACTION_SPECS", server)
         self.assertNotIn('"verify": ActionSpec', server)
         self.assertIn('"live_cert_reset": ActionSpec', server)
+        self.assertIn('"wx_test": ActionSpec', server)
+        self.assertIn("wx_test", frontend)
         self.assertIn("X-RR-Token", server)
         self.assertIn("Invalid request origin", server)
         self.assertIn("shell=False", server)
@@ -290,6 +292,24 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("[switch]$NonInteractiveConfirmed", configurator)
         for name in ("index.html", "app.js", "style.css"):
             self.assertTrue((ROOT / "web" / name).is_file())
+
+    def test_rr_notification_commands_dispatch_wxpusher_and_mail(self):
+        command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
+        manager = (
+            ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn('if /I "%~1"=="mail"', command)
+        self.assertIn('if /I "%~1"=="mt"', command)
+        self.assertIn('if /I "%~1"=="wx"', command)
+        self.assertIn('if /I "%~1"=="wt"', command)
+        self.assertIn("-Action ConfigureWxPusher", command)
+        self.assertIn("-Action TestWxPusher", command)
+        self.assertIn('"ConfigureWxPusher"', manager)
+        self.assertIn('"TestWxPusher"', manager)
+        self.assertIn("Configure-WxPusher", manager)
+        self.assertIn("Test-WxPusher", manager)
+        self.assertIn("configure_repo_failure_wxpusher.ps1", manager)
+        self.assertIn("MINIQMT_ALERT_WXPUSHER_TOKEN", manager)
 
     def test_rr_clear_removes_only_known_project_tasks(self):
         command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
@@ -322,7 +342,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         live = manager.index("【实盘任务：关键命令】")
         certification = manager.index("【快速实盘通道认证：固定1000元】")
-        mail = manager.index("【邮件与帮助】")
+        mail = manager.index("【通知与帮助】")
         self.assertLess(live, certification)
         self.assertLess(certification, mail)
         self.assertNotIn("【完整模拟能力认证", manager)

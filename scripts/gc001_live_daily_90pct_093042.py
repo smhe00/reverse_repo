@@ -60,7 +60,7 @@ from repo_execution_state_machine import (
 )
 from repo_failure_alert import (
     FailureNotifier,
-    load_optional_smtp_failure_notifier,
+    load_optional_alert_notifiers,
     notify_journal_failure,
     notify_journal_success,
     send_standalone_failure,
@@ -307,13 +307,13 @@ def main() -> int:
     notifier: FailureNotifier | None = None
     try:
         if args.alert_config:
-            notifier, alert_warning = load_optional_smtp_failure_notifier(
+            notifier, alert_warnings = load_optional_alert_notifiers(
                 Path(args.alert_config)
             )
-            if alert_warning:
+            if alert_warnings:
                 print(
-                    "WARNING: optional failure email is disabled: "
-                    f"{alert_warning}",
+                    "WARNING: optional notifications are disabled: "
+                    + "; ".join(alert_warnings),
                     file=sys.stderr,
                 )
         return _run_morning_command(args, verification, notifier)

@@ -56,9 +56,7 @@ foreach ($path in @($pythonPath, $bindingPath)) {
 }
 
 $alertArguments = @()
-$alertEnabled = Enable-ReverseRepoOptionalFailureEmail `
-    -ConfigPath $alertConfigPath `
-    -SecretPath $alertSecretPath
+$alertEnabled = Enable-ReverseRepoOptionalNotifications
 if ($alertEnabled) {
     $alertArguments = @("--alert-config", $alertConfigPath)
 }
@@ -111,7 +109,7 @@ if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
     $result = $LASTEXITCODE
 }
 finally {
-    Disable-ReverseRepoOptionalFailureEmail
+    Disable-ReverseRepoOptionalNotifications
 }
 if ($null -eq $result) {
     throw "Simulation morning executor returned no exit code."

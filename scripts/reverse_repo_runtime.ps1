@@ -442,20 +442,75 @@ function Remove-ReverseRepoLiveEnableManifest {
     }
 }
 
-function Enable-ReverseRepoOptionalFailureEmail {
+function Enable-ReverseRepoOptionalNotifications {
+    param(
+        [string]$EmailConfigPath = "",
+        [string]$EmailSecretPath = "",
+        [string]$WxPusherConfigPath = "",
+        [string]$WxPusherSecretPath = ""
+    )
+    Remove-Item Env:MINIQMT_ALERT_SMTP_PASSWORD `
+        -ErrorAction SilentlyContinue
+    Remove-Item Env:MINIQMT_ALERT_WXPUSHER_TOKEN `
+        -ErrorAction SilentlyContinue
+    $repoRoot = Get-ReverseRepoRoot
+    if ([string]::IsNullOrWhiteSpace($EmailConfigPath)) {
+        $EmailConfigPath = Join-Path `
+            $repoRoot `
+            "config\repo_failure_email.local.json"
+    }
+    if ([string]::IsNullOrWhiteSpace($EmailSecretPath)) {
+        $EmailSecretPath = Join-Path `
+            $repoRoot `
+            "config\repo_failure_email_secret.local.clixml"
+    }
+    if ([string]::IsNullOrWhiteSpace($WxPusherConfigPath)) {
+        $WxPusherConfigPath = Join-Path `
+            $repoRoot `
+            "config\repo_failure_wxpusher.local.json"
+    }
+    if ([string]::IsNullOrWhiteSpace($WxPusherSecretPath)) {
+        $WxPusherSecretPath = Join-Path `
+            $repoRoot `
+            "config\repo_failure_wxpusher_secret.local.clixml"
+    }
+    $anyEnabled = $false
+    if (Test-Path -LiteralPath $EmailConfigPath -PathType Leaf) {
+        $emailEnabled = Enable-ReverseRepoEmailTransport `
+            -ConfigPath $EmailConfigPath `
+            -SecretPath $EmailSecretPath
+        if ($emailEnabled) {
+            $anyEnabled = $true
+        }
+    }
+    else {
+        Write-Warning (
+            "Optional failure email is disabled because the configuration " +
+            "file does not exist: $EmailConfigPath"
+        )
+    }
+    if (Test-Path -LiteralPath $WxPusherConfigPath -PathType Leaf) {
+        $wxEnabled = Enable-ReverseRepoWxPusherTransport `
+            -ConfigPath $WxPusherConfigPath `
+            -SecretPath $WxPusherSecretPath
+        if ($wxEnabled) {
+            $anyEnabled = $true
+        }
+    }
+    else {
+        Write-Warning (
+            "Optional WxPusher push is disabled because the configuration " +
+            "file does not exist: $WxPusherConfigPath"
+        )
+    }
+    return $anyEnabled
+}
+
+function Enable-ReverseRepoEmailTransport {
     param(
         [Parameter(Mandatory = $true)][string]$ConfigPath,
         [Parameter(Mandatory = $true)][string]$SecretPath
     )
-    Remove-Item Env:MINIQMT_ALERT_SMTP_PASSWORD `
-        -ErrorAction SilentlyContinue
-    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
-        Write-Warning (
-            "Optional failure email is disabled because the configuration " +
-            "file does not exist: $ConfigPath"
-        )
-        return $false
-    }
     if (-not (Test-Path -LiteralPath $SecretPath -PathType Leaf)) {
         Write-Warning (
             "Optional failure email is disabled because the secret file " +
@@ -485,7 +540,43 @@ function Enable-ReverseRepoOptionalFailureEmail {
     }
 }
 
-function Disable-ReverseRepoOptionalFailureEmail {
+function Enable-ReverseRepoWxPusherTransport {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$SecretPath
+    )
+    if (-not (Test-Path -LiteralPath $SecretPath -PathType Leaf)) {
+        Write-Warning (
+            "Optional WxPusher push is disabled because the secret file " +
+            "does not exist: $SecretPath"
+        )
+        return $false
+    }
+    try {
+        $secureToken = Import-Clixml -LiteralPath $SecretPath
+        if ($secureToken -isnot [securestring]) {
+            throw "WxPusher secret is not a Windows SecureString."
+        }
+        $credential = [pscredential]::new("wxpusher", $secureToken)
+        $env:MINIQMT_ALERT_WXPUSHER_TOKEN = (
+            $credential.GetNetworkCredential().Password
+        )
+        return $true
+    }
+    catch {
+        Remove-Item Env:MINIQMT_ALERT_WXPUSHER_TOKEN `
+            -ErrorAction SilentlyContinue
+        Write-Warning (
+            "Optional WxPusher push is disabled: " +
+            $_.Exception.Message
+        )
+        return $false
+    }
+}
+
+function Disable-ReverseRepoOptionalNotifications {
     Remove-Item Env:MINIQMT_ALERT_SMTP_PASSWORD `
+        -ErrorAction SilentlyContinue
+    Remove-Item Env:MINIQMT_ALERT_WXPUSHER_TOKEN `
         -ErrorAction SilentlyContinue
 }

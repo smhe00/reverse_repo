@@ -63,6 +63,7 @@ ACTION_SPECS: dict[str, ActionSpec] = {
         timeout_seconds=60,
     ),
     "mail_test": ActionSpec(manager_action="TestMail", timeout_seconds=60),
+    "wx_test": ActionSpec(manager_action="TestWxPusher", timeout_seconds=60),
 }
 
 STATUS_FIELD_NAMES = {

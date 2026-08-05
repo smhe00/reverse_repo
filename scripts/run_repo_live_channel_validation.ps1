@@ -81,9 +81,7 @@ trap {
         -and $reason -notlike "*A live-channel certificate already exists*"
     ) {
         try {
-            $mailEnabled = Enable-ReverseRepoOptionalFailureEmail `
-                -ConfigPath $alertConfigPath `
-                -SecretPath $alertSecretPath
+            $mailEnabled = Enable-ReverseRepoOptionalNotifications
             if ($mailEnabled) {
                 & $pythonPath $validatorPath notify-failure `
                     --alert-config $alertConfigPath `
@@ -95,7 +93,7 @@ trap {
             Write-Warning "Failure email could not be delivered: $($_.Exception.Message)"
         }
         finally {
-            Disable-ReverseRepoOptionalFailureEmail
+            Disable-ReverseRepoOptionalNotifications
         }
     }
     [Console]::Error.WriteLine($reason)
@@ -180,9 +178,7 @@ $arguments = @(
     "--remark-prefix", $remarkPrefix,
     "--live-channel-certification"
 )
-$alertEnabled = Enable-ReverseRepoOptionalFailureEmail `
-    -ConfigPath $alertConfigPath `
-    -SecretPath $alertSecretPath
+$alertEnabled = Enable-ReverseRepoOptionalNotifications
 try {
     $executorStarted = $true
     & $pythonPath @arguments
@@ -274,5 +270,5 @@ try {
     Write-Output "Review .\rr cert stat, then run .\rr on manually."
 }
 finally {
-    Disable-ReverseRepoOptionalFailureEmail
+    Disable-ReverseRepoOptionalNotifications
 }

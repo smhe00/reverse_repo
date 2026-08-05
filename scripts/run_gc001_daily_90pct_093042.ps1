@@ -97,9 +97,7 @@ $arguments = @(
     ))
 )
 
-$alertEnabled = Enable-ReverseRepoOptionalFailureEmail `
-    -ConfigPath $AlertConfig `
-    -SecretPath $alertSecretPath
+$alertEnabled = Enable-ReverseRepoOptionalNotifications
 if ($alertEnabled) {
     $arguments += @("--alert-config", $AlertConfig)
 }
@@ -111,6 +109,6 @@ try {
     $processExitCode = [int]$LASTEXITCODE
 }
 finally {
-    Disable-ReverseRepoOptionalFailureEmail
+    Disable-ReverseRepoOptionalNotifications
 }
 exit $processExitCode

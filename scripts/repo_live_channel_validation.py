@@ -83,16 +83,19 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "notify-failure":
         from repo_failure_alert import (
-            load_optional_smtp_failure_notifier,
+            load_optional_alert_notifiers,
             notify_journal_certification,
         )
         from repo_execution_core import AtomicJournal
 
-        notifier, warning = load_optional_smtp_failure_notifier(
+        notifier, warnings = load_optional_alert_notifiers(
             Path(args.alert_config)
         )
         if notifier is None:
-            print("Optional failure email is disabled: " + str(warning or ""))
+            print(
+                "Optional notifications are disabled: "
+                + "; ".join(warnings)
+            )
             return 0
         journal_path = Path(args.journal)
         if journal_path.is_file():
@@ -121,20 +124,23 @@ def main() -> int:
                 reason=str(args.reason),
                 journal_path=journal_path,
             )
-        print("Live-channel certification failure email was sent.")
+        print("Live-channel certification failure notification was sent.")
         return 0
     if args.command == "notify-success":
         from repo_failure_alert import (
-            load_optional_smtp_failure_notifier,
+            load_optional_alert_notifiers,
             notify_journal_certification,
         )
         from repo_execution_core import AtomicJournal
 
-        notifier, warning = load_optional_smtp_failure_notifier(
+        notifier, warnings = load_optional_alert_notifiers(
             Path(args.alert_config)
         )
         if notifier is None:
-            print("Optional failure email is disabled: " + str(warning or ""))
+            print(
+                "Optional notifications are disabled: "
+                + "; ".join(warnings)
+            )
             return 0
         journal_path = Path(args.journal)
         journal = AtomicJournal(
@@ -150,7 +156,7 @@ def main() -> int:
             state="certificate_issued",
             passed=True,
         )
-        print("Live-channel certification success email was sent.")
+        print("Live-channel certification success notification was sent.")
         return 0
     if args.command == "preflight":
         result = live_preflight(
