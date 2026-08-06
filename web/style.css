@@ -8,6 +8,7 @@
   --teal: #0b6b66;
   --teal-dark: #074b48;
   --amber: #b56b21;
+  --blue: #2f5da8;
   --red: #a13f36;
   --shadow: 0 20px 45px rgba(39, 54, 56, 0.09);
   font-family: "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
@@ -68,6 +69,7 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 .certificate-status span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .certificate-status.valid { border-left: 4px solid var(--teal); }
 .certificate-status.invalid { border-left: 4px solid var(--amber); }
+.certificate-status.forced { border-left: 4px solid var(--blue); }
 .error-text { color: var(--red); }
 .terminal { margin: 0; min-height: 246px; max-height: 310px; overflow: auto; padding: 16px; border-radius: 14px; background: #152025; color: #d9e6e0; font: 12px/1.65 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-word; }
 .terminal.large { min-height: 286px; max-height: 430px; }

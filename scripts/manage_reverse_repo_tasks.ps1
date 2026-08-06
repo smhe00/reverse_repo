@@ -1271,12 +1271,26 @@ switch ($Action) {
     "Status" {
         Get-ManagedTaskStatus
         Write-Output ""
-        try {
-            Assert-LiveEnableGate
+        $manifestPath = Get-ReverseRepoLiveEnableManifestPath
+        $forced = $false
+        if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+            $manifest = Get-Content `
+                -LiteralPath $manifestPath `
+                -Raw |
+                ConvertFrom-Json
+            $forced = ($manifest.armed_without_certificate -eq $true)
         }
-        catch {
-            Write-Output "认证依据：当前没有可用于rr on的有效证书。"
-            Write-Output "原因：$($_.Exception.Message)"
+        if ($forced) {
+            Write-Output "实盘通道认证：强制启用（跳过证书检查）。"
+        }
+        else {
+            try {
+                Assert-LiveEnableGate
+            }
+            catch {
+                Write-Output "认证依据：当前没有可用于rr on的有效证书。"
+                Write-Output "原因：$($_.Exception.Message)"
+            }
         }
     }
     "Enable" {

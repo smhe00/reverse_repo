@@ -169,7 +169,10 @@ function renderTaskStatus(tasks, statusOk) {
 function renderCertification(status) {
   certificationStatus = status || null;
   const valid = String(status?.valid || "false") === "true";
-  elements.certificateStatus.className = `certificate-status ${valid ? "valid" : "invalid"}`;
+  const forced = String(status?.valid || "") === "forced";
+  elements.certificateStatus.className = `certificate-status ${
+    forced ? "forced" : valid ? "valid" : "invalid"
+  }`;
   elements.certificateStatus.replaceChildren();
   const title = document.createElement("strong");
   title.textContent = status?.summary || "认证依据未知";

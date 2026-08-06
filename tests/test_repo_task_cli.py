@@ -269,6 +269,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("ACTION_SPECS", server)
         self.assertNotIn('"verify": ActionSpec', server)
         self.assertIn('"live_cert_reset": ActionSpec', server)
+        self.assertIn('"valid": "forced"', server)
         self.assertIn("X-RR-Token", server)
         self.assertIn("Invalid request origin", server)
         self.assertIn("shell=False", server)
@@ -365,6 +366,7 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertIn("-ForceEnable:$ForceEnable", manager)
         self.assertIn("armed_without_certificate", runtime)
         self.assertIn("--force", runtime)
+        self.assertIn("实盘通道认证：强制启用（跳过证书检查）", manager)
 
     def test_certification_installer_has_no_stale_fixed_default_date(self):
         installer = (

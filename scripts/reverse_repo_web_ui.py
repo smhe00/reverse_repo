@@ -132,6 +132,13 @@ def _parse_certification_status(output: str) -> dict[str, str]:
                 "scope": "固定1000元真实通道；不含故障注入恢复证明",
             }
         if line.startswith("实盘通道认证："):
+            if "强制启用" in line:
+                return {
+                    "kind": "live_channel",
+                    "valid": "forced",
+                    "summary": line,
+                    "scope": "强制启用：跳过实盘认证证书检查，直接交易",
+                }
             valid = "有效" in line and "无效" not in line
             return {
                 "kind": "live_channel",
