@@ -412,7 +412,6 @@ function Invoke-ReverseRepoLiveEnableManifest {
         }
     }
     $arguments = @(
-        $pythonPath,
         $scriptPath,
         $Mode,
         "--strategy-config",
