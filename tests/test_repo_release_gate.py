@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -108,7 +110,9 @@ class ReleaseGateLiveOnlyTests(unittest.TestCase):
                 "--signing-key", str(root / "key.json"),
                 "--strategy-config", str(root / "runtime.json"),
             ]
-            with mock.patch("sys.argv", arguments):
+            with mock.patch("sys.argv", arguments), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
                 with self.assertRaises(SystemExit) as raised:
                     release_gate_main()
                 self.assertEqual(raised.exception.code, 2)
