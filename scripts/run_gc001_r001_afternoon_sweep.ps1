@@ -111,6 +111,12 @@ $alertEnabled = Enable-ReverseRepoOptionalFailureEmail `
 if ($alertEnabled) {
     $arguments += @("--alert-config", $AlertConfig)
 }
+$previousErrorActionPreference = $ErrorActionPreference
+# Windows PowerShell 5.1 turns native stderr redirected with 2> into error
+# records; under ErrorActionPreference=Stop the first stderr line becomes a
+# terminating error and is never written to the log. Capture with Continue so
+# the strategy's failure reason lands in stderr.log.
+$ErrorActionPreference = "Continue"
 try {
     & $pythonPath @arguments 1> $stdoutPath 2> $stderrPath
     if ($null -eq $LASTEXITCODE) {
@@ -119,6 +125,7 @@ try {
     $processExitCode = [int]$LASTEXITCODE
 }
 finally {
+    $ErrorActionPreference = $previousErrorActionPreference
     Disable-ReverseRepoOptionalFailureEmail
 }
 exit $processExitCode
