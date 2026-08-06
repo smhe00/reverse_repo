@@ -351,6 +351,21 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertLess(gate, manifest)
         self.assertIn("Cannot install or update running live tasks", manager)
 
+    def test_rr_on_force_dispatches_without_live_gate(self):
+        command = (ROOT / "rr.cmd").read_text(encoding="utf-8")
+        manager = (
+            ROOT / "scripts" / "manage_reverse_repo_tasks.ps1"
+        ).read_text(encoding="utf-8")
+        runtime = (
+            ROOT / "scripts" / "reverse_repo_runtime.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn('if /I "%~2"=="force"', command)
+        self.assertIn("-Action Enable -ForceEnable", command)
+        self.assertIn("[switch]$ForceEnable", manager)
+        self.assertIn("-ForceEnable:$ForceEnable", manager)
+        self.assertIn("armed_without_certificate", runtime)
+        self.assertIn("--force", runtime)
+
     def test_certification_installer_has_no_stale_fixed_default_date(self):
         installer = (
             ROOT

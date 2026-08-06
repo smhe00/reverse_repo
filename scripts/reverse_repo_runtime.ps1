@@ -384,7 +384,8 @@ function Invoke-ReverseRepoLiveEnableManifest {
     param(
         [Parameter(Mandatory = $true)]
         [ValidateSet("create", "verify")]
-        [string]$Mode
+        [string]$Mode,
+        [switch]$Force
     )
     $pythonPath = Get-ReverseRepoPython
     $scriptPath = Join-Path `
@@ -404,34 +405,54 @@ function Invoke-ReverseRepoLiveEnableManifest {
         $pythonPath,
         $scriptPath,
         $strategyConfigPath,
-        $certificatePath,
         $signingKeyPath
     )) {
         if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
             throw "Live-enable snapshot dependency is missing: $requiredPath"
         }
     }
-    & $pythonPath `
-        $scriptPath `
-        $Mode `
-        "--strategy-config" `
-        $strategyConfigPath `
-        "--live-channel-certificate" `
-        $certificatePath `
-        "--signing-key" `
-        $signingKeyPath `
-        "--manifest" `
+    $arguments = @(
+        $pythonPath,
+        $scriptPath,
+        $Mode,
+        "--strategy-config",
+        $strategyConfigPath,
+        "--live-channel-certificate",
+        $certificatePath,
+        "--signing-key",
+        $signingKeyPath,
+        "--manifest",
         $manifestPath
+    )
+    if ($Mode -eq "create" -and $Force) {
+        $arguments += "--force"
+    }
+    & $pythonPath @arguments
     if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
         throw "Live-enable snapshot $Mode failed."
     }
 }
 
 function New-ReverseRepoLiveEnableManifest {
-    Invoke-ReverseRepoLiveEnableManifest -Mode "create"
+    param([switch]$Force)
+    Invoke-ReverseRepoLiveEnableManifest -Mode "create" -Force:$Force
 }
 
 function Assert-ReverseRepoLiveEnableManifest {
+    $manifestPath = Get-ReverseRepoLiveEnableManifestPath
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Live-enable snapshot is missing. Run .\rr on first."
+    }
+    $manifest = Get-Content `
+        -LiteralPath $manifestPath `
+        -Raw |
+        ConvertFrom-Json
+    if ($manifest.armed_without_certificate -eq $true) {
+        Write-Warning (
+            "强制启用模式：不检查实盘认证证书，直接执行。"
+        )
+        return
+    }
     Invoke-ReverseRepoLiveEnableManifest -Mode "verify"
 }
 

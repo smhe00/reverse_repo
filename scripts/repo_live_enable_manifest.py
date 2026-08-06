@@ -30,6 +30,7 @@ def create_live_enable_manifest(
     now: datetime | None = None,
     verification: Mapping[str, Any] | None = None,
     runtime_sha256: str | None = None,
+    armed_without_certificate: bool = False,
 ) -> dict[str, Any]:
     configuration = reverse_repo_strategy_config(strategy_config)
     formal = (
@@ -47,9 +48,12 @@ def create_live_enable_manifest(
         "strategy_config_sha256": reverse_repo_strategy_config_sha256(
             strategy_config
         ),
-        "live_channel_certificate_sha256": _file_sha256(
-            live_channel_certificate
+        "live_channel_certificate_sha256": (
+            ""
+            if armed_without_certificate
+            else _file_sha256(live_channel_certificate)
         ),
+        "armed_without_certificate": bool(armed_without_certificate),
         "transition_spec_sha256": str(
             formal["transition_spec_sha256"]
         ),
@@ -99,12 +103,13 @@ def verify_live_enable_manifest(
         raise RuntimeError(
             "live configuration hash changed after rr on"
         )
-    if manifest.get("live_channel_certificate_sha256") != _file_sha256(
-        live_channel_certificate
-    ):
-        raise RuntimeError(
-            "simulation certificate changed after rr on"
-        )
+    if manifest.get("armed_without_certificate") is not True:
+        if manifest.get("live_channel_certificate_sha256") != _file_sha256(
+            live_channel_certificate
+        ):
+            raise RuntimeError(
+                "simulation certificate changed after rr on"
+            )
     formal = (
         dict(verify_state_machines())
         if verification is None
@@ -198,12 +203,18 @@ def main() -> int:
         description="Create or verify the fail-closed live-enable snapshot."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("create", "verify"):
-        child = subparsers.add_parser(command)
+    create_parser = subparsers.add_parser("create")
+    verify_parser = subparsers.add_parser("verify")
+    for child in (create_parser, verify_parser):
         child.add_argument("--strategy-config", required=True)
         child.add_argument("--live-channel-certificate", required=True)
         child.add_argument("--signing-key", required=True)
         child.add_argument("--manifest", required=True)
+    create_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="arm without binding a live-channel certificate",
+    )
     args = parser.parse_args()
     arguments = {
         "strategy_config": Path(args.strategy_config),
@@ -211,7 +222,10 @@ def main() -> int:
         "signing_key": Path(args.signing_key),
     }
     if args.command == "create":
-        manifest = create_live_enable_manifest(**arguments)
+        manifest = create_live_enable_manifest(
+            **arguments,
+            armed_without_certificate=bool(args.force),
+        )
         atomic_write_json(Path(args.manifest), manifest)
         print("Live-enable manifest created and signed.")
     else:

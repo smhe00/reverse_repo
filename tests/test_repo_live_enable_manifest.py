@@ -192,6 +192,46 @@ class LiveEnableManifestTests(unittest.TestCase):
                     runtime_sha256=RUNTIME_HASH,
                 )
 
+    def test_forced_manifest_verifies_without_certificate(self):
+        with TemporaryDirectory() as directory:
+            config, certificate, key, manifest = self._files(directory)
+            certificate.unlink()
+            payload = create_live_enable_manifest(
+                strategy_config=config,
+                live_channel_certificate=certificate,
+                signing_key=key,
+                now=datetime(2026, 8, 3, 8, 0, tzinfo=timezone.utc),
+                verification=VERIFICATION,
+                runtime_sha256=RUNTIME_HASH,
+                armed_without_certificate=True,
+            )
+            self.assertTrue(payload["armed_without_certificate"])
+            self.assertEqual(payload["live_channel_certificate_sha256"], "")
+            atomic_write_json(manifest, payload)
+            verified = verify_live_enable_manifest(
+                manifest_path=manifest,
+                strategy_config=config,
+                live_channel_certificate=certificate,
+                signing_key=key,
+                verification=VERIFICATION,
+                runtime_sha256=RUNTIME_HASH,
+            )
+            self.assertTrue(verified["armed_without_certificate"])
+
+    def test_normal_manifest_requires_certificate_file(self):
+        with TemporaryDirectory() as directory:
+            config, certificate, key, manifest = self._create(directory)
+            certificate.unlink()
+            with self.assertRaises(RuntimeError):
+                verify_live_enable_manifest(
+                    manifest_path=manifest,
+                    strategy_config=config,
+                    live_channel_certificate=certificate,
+                    signing_key=key,
+                    verification=VERIFICATION,
+                    runtime_sha256=RUNTIME_HASH,
+                )
+
     def test_live_wrappers_verify_manifest_before_resolving_qmt(self):
         scripts = Path(__file__).resolve().parents[1] / "scripts"
         for name in (

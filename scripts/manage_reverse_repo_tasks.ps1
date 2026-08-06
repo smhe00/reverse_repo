@@ -31,7 +31,8 @@ param(
     [string]$Action,
     [string]$LiveCertConfirmation = "",
     [string]$CertDate = "",
-    [string]$StressDate = ""
+    [string]$StressDate = "",
+    [switch]$ForceEnable
 )
 
 Set-StrictMode -Version Latest
@@ -467,7 +468,10 @@ function Clear-AllReverseRepoTasks {
 }
 
 function Set-ManagedTasksEnabled {
-    param([Parameter(Mandatory = $true)][bool]$Enabled)
+    param(
+        [Parameter(Mandatory = $true)][bool]$Enabled,
+        [switch]$ForceEnable
+    )
     $manifestCreated = $false
     if ($Enabled) {
         # Reconcile task definitions while they are disabled before arming.
@@ -478,12 +482,20 @@ function Set-ManagedTasksEnabled {
             $taskDefinitions | Where-Object { $_.EnabledByConfig }
         )
         if ($activeDefinitions.Count -gt 0) {
-            Assert-LiveEnableGate
+            if ($ForceEnable) {
+                Write-Warning (
+                    "强制启用：跳过实盘认证门禁与执行时证书检查，直接交易。" +
+                    "仅限确认通道可用后使用；风险自负。"
+                )
+            }
+            else {
+                Assert-LiveEnableGate
+            }
             if ($PSCmdlet.ShouldProcess(
                 (Get-ReverseRepoLiveEnableManifestPath),
                 "Create signed live-enable snapshot"
             )) {
-                New-ReverseRepoLiveEnableManifest
+                New-ReverseRepoLiveEnableManifest -Force:$ForceEnable
                 $manifestCreated = $true
             }
             else {
@@ -1161,6 +1173,10 @@ rr - miniQMT 逆回购自动任务管理工具
       通过本地验证、账户绑定和1000元实盘快速证书门禁后创建签名启用快照，
       仅启用资金比例大于0的任务。任务尚未安装时先执行 .\rr add。
 
+  .\rr on force
+      ⚠ 开发者快速通道：跳过实盘认证门禁与执行时证书检查，直接启用并交易。
+      不要求有效实盘证书，风险自负；仅限已确认交易通道可用时使用。
+
   .\rr add
       安装或更新两个实盘任务；安装完成后保持Disabled，不会立即交易。
 
@@ -1265,7 +1281,9 @@ switch ($Action) {
     }
     "Enable" {
         try {
-            Set-ManagedTasksEnabled -Enabled $true
+            Set-ManagedTasksEnabled `
+                -Enabled $true `
+                -ForceEnable:$ForceEnable
             Get-ManagedTaskStatus
         }
         catch {

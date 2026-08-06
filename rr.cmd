@@ -41,7 +41,11 @@ if /I "%~1"=="stat" (
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="on" (
-    "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Enable
+    if /I "%~2"=="force" (
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Enable -ForceEnable
+    ) else (
+        "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action Enable
+    )
     exit /b !ERRORLEVEL!
 )
 if /I "%~1"=="off" (
