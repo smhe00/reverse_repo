@@ -113,9 +113,23 @@ if /I "%~1"=="dev" (
         ) else (
             "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevStress -StressDate "%~3"
         )
+    ) else if /I "%~2"=="signal" (
+        if /I "%~3"=="stat" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevSignalStatus
+        ) else if /I "%~3"=="off" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevSignalDisable
+        ) else if /I "%~3"=="del" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevSignalRemove
+        ) else if /I "%~3"=="smoke" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevSignalSmoke
+        ) else if "%~3"=="" (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevSignal
+        ) else (
+            "%POWERSHELL%" %PSARGS% "%MANAGER%" -Action DevSignal -SignalDate "%~3"
+        )
     ) else (
         echo Unknown developer argument: %~2
-        echo Supported: bind, status, cert [date|stat|off|del|reset], stress [date|stat|off|del]
+        echo Supported: bind, status, cert [date|stat|off|del|reset], stress [date|stat|off|del], signal [date|stat|off|del|smoke]
         exit /b 2
     )
     exit /b !ERRORLEVEL!

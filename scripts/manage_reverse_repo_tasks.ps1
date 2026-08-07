@@ -25,6 +25,11 @@ param(
         "DevStressDisable",
         "DevStressRemove",
         "DevStressStatus",
+        "DevSignal",
+        "DevSignalDisable",
+        "DevSignalRemove",
+        "DevSignalStatus",
+        "DevSignalSmoke",
         "Initialize",
         "Help"
     )]
@@ -32,6 +37,8 @@ param(
     [string]$LiveCertConfirmation = "",
     [string]$CertDate = "",
     [string]$StressDate = "",
+    [string]$SignalDate = "",
+    [int]$SignalAmount = 100000,
     [switch]$ForceEnable
 )
 
@@ -45,6 +52,7 @@ $managedTaskNames = @(
     "miniQMT Reverse Repo Second"
 )
 $stressTaskName = "miniQMT SIM Interface Stress 5Hz"
+$signalTaskName = "miniQMT GC001 Signal Simulation"
 $certTaskNames = @(
     "miniQMT SIM Repo V3 Morning Normal",
     "miniQMT SIM Repo V3 Afternoon Normal",
@@ -79,6 +87,7 @@ $allReverseRepoTaskNames = @(
         $obsoleteCertTaskNames +
         $readOnlyTaskNames +
         @($stressTaskName) +
+        @($signalTaskName) +
         $legacyProjectTaskNames |
         Sort-Object -Unique
 )
@@ -1104,6 +1113,147 @@ function Remove-SimulationStressTask {
     Get-SimulationStressTaskStatus
 }
 
+function Install-SimulationSignalTask {
+    $scriptPath = Join-Path `
+        $PSScriptRoot `
+        "install_gc001_signal_simulation_task.ps1"
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "GC001 signal simulation installer is missing: $scriptPath"
+    }
+    if ([string]::IsNullOrWhiteSpace($SignalDate)) {
+        & $scriptPath -Amount $SignalAmount
+        return
+    }
+    try {
+        $parsedDate = [datetime]::ParseExact(
+            $SignalDate,
+            "yyyy-MM-dd",
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+    }
+    catch [FormatException] {
+        throw "GC001 signal simulation date must use YYYY-MM-DD format."
+    }
+    & $scriptPath -SignalDate $parsedDate -Amount $SignalAmount
+}
+
+function Get-SimulationSignalTaskStatus {
+    $task = Get-ScheduledTask `
+        -TaskName $signalTaskName `
+        -ErrorAction SilentlyContinue
+    if ($null -eq $task) {
+        return [pscustomobject]@{
+            TaskName = $signalTaskName
+            Installed = $false
+            State = "NotInstalled"
+            Trigger = $null
+            NextRunTime = $null
+            LastRunTime = $null
+            LastResult = $null
+        }
+    }
+    $info = Get-ScheduledTaskInfo -TaskName $signalTaskName
+    $isDisabled = ([string]$task.State -eq "Disabled")
+    $hasNeverRun = (
+        [int64]$info.LastTaskResult -eq 267011 `
+        -or $info.LastRunTime.Year -lt 2000
+    )
+    return [pscustomobject]@{
+        TaskName = $signalTaskName
+        Installed = $true
+        State = [string]$task.State
+        Trigger = $task.Triggers[0].StartBoundary
+        NextRunTime = if ($isDisabled) {
+            "已撤销，不会运行"
+        }
+        elseif ($info.NextRunTime -le [datetime]::MinValue) {
+            "没有后续计划"
+        }
+        else {
+            $info.NextRunTime
+        }
+        LastRunTime = if ($hasNeverRun) {
+            "尚未运行"
+        }
+        else {
+            $info.LastRunTime
+        }
+        LastResult = Format-TaskResult `
+            -Result ([int64]$info.LastTaskResult)
+    }
+}
+
+function Disable-SimulationSignalTask {
+    $task = Get-ScheduledTask `
+        -TaskName $signalTaskName `
+        -ErrorAction SilentlyContinue
+    if ($null -eq $task) {
+        Write-Output "GC001 信号模拟验证任务未安装，无需撤销。"
+        return
+    }
+    if ([string]$task.State -eq "Running") {
+        throw (
+            "GC001 signal simulation task is already running. Refusing " +
+            "abrupt termination because simulated orders may need cleanup."
+        )
+    }
+    if ($PSCmdlet.ShouldProcess(
+        $signalTaskName,
+        "Disable GC001 signal simulation task"
+    )) {
+        Disable-ScheduledTask -TaskName $signalTaskName | Out-Null
+    }
+    Get-SimulationSignalTaskStatus
+}
+
+function Remove-SimulationSignalTask {
+    $task = Get-ScheduledTask `
+        -TaskName $signalTaskName `
+        -ErrorAction SilentlyContinue
+    if ($null -eq $task) {
+        Write-Output "GC001 信号模拟验证任务未安装，无需删除。"
+        return
+    }
+    if ([string]$task.State -eq "Running") {
+        throw (
+            "GC001 signal simulation task is already running. Refusing " +
+            "abrupt termination because simulated orders may need cleanup."
+        )
+    }
+    if ($PSCmdlet.ShouldProcess(
+        $signalTaskName,
+        "Delete GC001 signal simulation task"
+    )) {
+        Unregister-ScheduledTask `
+            -TaskName $signalTaskName `
+            -Confirm:$false
+    }
+    Get-SimulationSignalTaskStatus
+}
+
+function Invoke-SimulationSignalSmoke {
+    $wrapper = Join-Path `
+        $PSScriptRoot `
+        "run_gc001_signal_simulation.ps1"
+    if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
+        throw "GC001 signal simulation wrapper is missing: $wrapper"
+    }
+    if (-not $PSCmdlet.ShouldProcess(
+        $signalTaskName,
+        "Run one-shot GC001 signal simulation smoke check"
+    )) {
+        return
+    }
+    & powershell.exe `
+        -NoProfile `
+        -ExecutionPolicy Bypass `
+        -File $wrapper `
+        -Smoke
+    if ($null -eq $LASTEXITCODE -or [int]$LASTEXITCODE -ne 0) {
+        throw "GC001 signal simulation smoke check failed."
+    }
+}
+
 function Get-DeveloperValidationStatus {
     $certificatePath = Join-Path `
         $repoRoot `
@@ -1135,6 +1285,8 @@ function Get-DeveloperValidationStatus {
     Get-SimulationCertificationTaskStatus
     Write-Output ""
     Get-SimulationStressTaskStatus
+    Write-Output ""
+    Get-SimulationSignalTaskStatus
 }
 
 function Connect-DeveloperSimulationBinding {
@@ -1362,6 +1514,21 @@ switch ($Action) {
     }
     "DevStressStatus" {
         Get-SimulationStressTaskStatus
+    }
+    "DevSignal" {
+        Install-SimulationSignalTask
+    }
+    "DevSignalDisable" {
+        Disable-SimulationSignalTask
+    }
+    "DevSignalRemove" {
+        Remove-SimulationSignalTask
+    }
+    "DevSignalStatus" {
+        Get-SimulationSignalTaskStatus
+    }
+    "DevSignalSmoke" {
+        Invoke-SimulationSignalSmoke
     }
     "Help" {
         $runtimeConfigPath = Join-Path `
