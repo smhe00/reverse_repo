@@ -528,6 +528,7 @@ def main() -> int:
             r"D:\gitee\miniQMT\data\gc001_ticks\date=20260731\gc001_qmt_l1_ticks.jsonl",
             r"D:\gitee\miniQMT\data\gc001_morning\date=20260806\gc001_morning_l1_from_cache.jsonl",
             r"D:\gitee\miniQMT\data\gc001_validation\date=20260807\gc001_validation_l1.jsonl",
+            r"D:\gitee\miniQMT\data\gc001_morning\date=20260807\gc001_daily_l1_from_cache.jsonl",
         ],
     )
     parser.add_argument("--principal", type=int, default=1_000)

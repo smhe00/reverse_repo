@@ -144,3 +144,20 @@ tick 版回测现已支持窗口过滤，可只评估指定分钟：
 当前仅有上午 tick 数据，14:30–14:36 窗口样本为空；全天采集积累多日后，
 用同一命令即可对该窗口做 eat/wallgone 的按天留一评估，验证 offset=6
 的参数是否稳定。
+
+### 缓存补回（当天漏采时使用）
+
+全天实时采集任务上线前，或某天任务未运行时，可在收盘后从 QMT 本地缓存
+补回当天全天五档 tick：
+
+```powershell
+.\venv\Scripts\python.exe D:\gitee\miniQMT\scripts\export_gc001_daily_from_cache.py `
+  --trade-date 2026-08-07
+```
+
+输出写入 `data\gc001_morning\date=YYYYMMDD\gc001_daily_l1_from_cache.jsonl`，
+覆盖 09:15–15:30（前提：当天 QMT 终端在线且有 204001 行情订阅）。该文件已
+加入 tick 回测默认输入，按天留一评估会把它作为一个独立交易日参与交叉验证。
+
+2026-08-07 即通过缓存补回：5604 帧、283 个交易分钟、14:30–14:36 每窗口
+20 帧；补回后四源回测 episode 数从 236 增至 470。
