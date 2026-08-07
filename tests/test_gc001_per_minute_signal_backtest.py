@@ -17,6 +17,7 @@ from gc001_per_minute_signal_backtest import (  # noqa: E402
     BacktestConfig,
     build_episodes,
     contextual_bandit_evaluate,
+    filter_minutes,
     load_tick_files,
     summarize_episodes,
 )
@@ -166,6 +167,43 @@ class PerMinuteSignalBacktestTests(unittest.TestCase):
             bandit = contextual_bandit_evaluate(episodes)
             self.assertIn("oos_mean_reward_bp", bandit)
             self.assertIn("baseline_always_act_mean_bp", bandit)
+
+    def test_filter_minutes_keeps_only_selected_window(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ticks.jsonl"
+            tz = timezone(timedelta(hours=8))
+            ticks: list[dict[str, object]] = []
+            for minute, last in (("09:30", 1.30), ("09:31", 1.31)):
+                base = int(
+                    datetime(2026, 8, 6, int(minute[:2]), int(minute[3:]), tzinfo=tz).timestamp()
+                    * 1000
+                )
+                ticks.append(
+                    _tick(
+                        epoch_ms=base,
+                        last=last,
+                        ask=[last + 0.005, last + 0.01, 0.0, 0.0, 0.0],
+                        ask_vol=[1000.0, 500.0, 0.0, 0.0, 0.0],
+                        bid=[last, last - 0.005, 0.0, 0.0, 0.0],
+                        bid_vol=[800.0, 400.0, 0.0, 0.0, 0.0],
+                    )
+                )
+            _write_ticks(path, ticks)
+            frame = load_tick_files([path])
+            config = BacktestConfig(
+                principal_yuan=1_000,
+                decision_seconds=3.0,
+                min_ticks=1,
+                hold_seconds=60.0,
+                anchor="ask1",
+            )
+            episodes = build_episodes(frame, config)
+            self.assertEqual(len(episodes), 2)
+            filtered = filter_minutes(episodes, ["09:31:00"])
+            self.assertEqual(len(filtered), 1)
+            self.assertEqual(filtered.iloc[0]["minute"], "09:31:00")
 
 
 if __name__ == "__main__":

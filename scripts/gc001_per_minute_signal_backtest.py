@@ -275,10 +275,23 @@ def summarize_episodes(episodes: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("total_reward_bp", ascending=False)
 
 
+def filter_minutes(
+    episodes: pd.DataFrame,
+    minutes: Iterable[str],
+) -> pd.DataFrame:
+    """只保留指定分钟（HH:MM:SS）的 episode，用于聚焦开盘/尾盘窗口。"""
+    allowed = {str(value).strip() for value in minutes if str(value).strip()}
+    if not allowed:
+        return episodes
+    return episodes[episodes["minute"].isin(allowed)].reset_index(drop=True)
+
+
 def run_grid(
     episodes_factory,
     ticks: pd.DataFrame,
     base: BacktestConfig,
+    *,
+    minute_filter: Iterable[str] = (),
 ) -> pd.DataFrame:
     """在 offsets / hold / decision_seconds 上做小网格，返回汇总表。"""
     rows: list[dict[str, Any]] = []
@@ -293,6 +306,9 @@ def run_grid(
                 offsets={name: offset for name in TRIGGER_NAMES},
             )
             eps = episodes_factory(ticks, config)
+            if eps.empty:
+                continue
+            eps = filter_minutes(eps, minute_filter)
             if eps.empty:
                 continue
             fired = eps[eps["trigger"] != "none"]
@@ -519,6 +535,15 @@ def main() -> int:
     parser.add_argument("--min-ticks", type=int, default=2)
     parser.add_argument("--hold-seconds", type=float, default=60.0)
     parser.add_argument("--anchor", choices=("ask1", "micro1"), default="ask1")
+    parser.add_argument(
+        "--minutes",
+        default="",
+        help=(
+            "只评估这些分钟（HH:MM:SS，逗号分隔）。例如 "
+            "09:31:00,14:30:00,14:31:00,14:32:00,14:33:00,14:34:00,"
+            "14:35:00,14:36:00；留空表示全部交易分钟。"
+        ),
+    )
     parser.add_argument("--output", default="reports/gc001_per_minute_signal")
     args = parser.parse_args()
 
@@ -531,8 +556,16 @@ def main() -> int:
         anchor=args.anchor,
     )
     episodes = build_episodes(ticks, config)
+    minute_filter = [m for m in args.minutes.split(",") if m.strip()]
+    if minute_filter:
+        episodes = filter_minutes(episodes, minute_filter)
     summary = summarize_episodes(episodes)
-    grid = run_grid(lambda t, c: build_episodes(t, c), ticks, config)
+    grid = run_grid(
+        lambda t, c: build_episodes(t, c),
+        ticks,
+        config,
+        minute_filter=minute_filter,
+    )
     bandit = contextual_bandit_evaluate(episodes)
 
     output = Path(args.output)

@@ -122,3 +122,25 @@ offset 的设计一致）。中间交易时段收益明显更低、最优 offset
 这是 244 天、每时段约 249 个样本上的一致规律；作为可执行方向，值得在
 未来全天五档 tick 数据上用 eat/wallgone 特征验证开盘 09:31 与尾盘
 14:30–14:36 这两个窗口。
+
+## 数据采集与窗口聚焦评估（已部署）
+
+为验证上述规律在五档盘口信号上是否成立，已部署只读的全天 tick 采集任务：
+
+- 任务：`miniQMT GC001 Full-Day Tick Collector`（周一至周五 09:15 启动，
+  采集至 15:31，写入 `D:\gitee\miniQMT\data\gc001_ticks\date=YYYYMMDD\`）；
+- 该任务只订阅行情、绝不连接交易通道；
+- 管理脚本：`D:\gitee\miniQMT\scripts\manage_gc001_full_day_tick_collector_task.ps1`
+  （Install / Remove / Status / Enable / Disable）。
+
+tick 版回测现已支持窗口过滤，可只评估指定分钟：
+
+```powershell
+.\venv\Scripts\python.exe scripts\gc001_per_minute_signal_backtest.py `
+  --minutes "09:31:00,14:30:00,14:31:00,14:32:00,14:33:00,14:34:00,14:35:00,14:36:00" `
+  --output reports\gc001_per_minute_signal\windows_0931_1430
+```
+
+当前仅有上午 tick 数据，14:30–14:36 窗口样本为空；全天采集积累多日后，
+用同一命令即可对该窗口做 eat/wallgone 的按天留一评估，验证 offset=6
+的参数是否稳定。
