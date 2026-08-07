@@ -529,6 +529,42 @@ class ReverseRepoTaskCliTests(unittest.TestCase):
         self.assertEqual(readme.count(".\\build_readme_pdf.ps1"), 1)
         self.assertTrue(readme.rstrip().endswith("验证和启用流程。"))
 
+    def test_dev_isolation_gate_is_outside_protected_execution_sources(self):
+        # rr dev functionality must be unrelated to the live certification
+        # chain: the shared simulation-isolation gate lives in a file that is
+        # NOT part of EXECUTION_SOURCE_FILES, so changing dev behavior never
+        # invalidates the live certificate or the .\rr on path.
+        import sys
+
+        scripts = ROOT / "scripts"
+        sys.path.insert(0, str(scripts))
+        from repo_execution_state_machine import EXECUTION_SOURCE_FILES  # noqa: E402
+
+        self.assertTrue((scripts / "reverse_repo_dev_isolation.ps1").is_file())
+        self.assertNotIn(
+            "reverse_repo_dev_isolation.ps1",
+            EXECUTION_SOURCE_FILES,
+        )
+        isolation = (
+            scripts / "reverse_repo_dev_isolation.ps1"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("Assert-DeveloperSimulationIsolation", isolation)
+        self.assertNotIn("Reverse Repo First", isolation)
+        self.assertNotIn("Live-enable snapshot", isolation)
+
+    def test_dev_installers_use_shared_gate_without_live_disable_requirement(self):
+        scripts = ROOT / "scripts"
+        signal_installer = (
+            scripts / "install_gc001_signal_simulation_task.ps1"
+        ).read_text(encoding="utf-8-sig")
+        stress_installer = (
+            scripts / "install_repo_simulation_stress_task.ps1"
+        ).read_text(encoding="utf-8-sig")
+        for installer in (signal_installer, stress_installer):
+            self.assertIn("reverse_repo_dev_isolation.ps1", installer)
+            self.assertIn("Assert-DeveloperSimulationIsolation", installer)
+            self.assertNotIn("Run .\\rr off before", installer)
+
 
 if __name__ == "__main__":
     unittest.main()

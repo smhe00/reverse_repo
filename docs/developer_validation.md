@@ -80,7 +80,6 @@ summary.json 的 `legs` 字段按模型记录各自成交/撤单结果。
 
 ```powershell
 .\rr dev signal smoke        # 立即检查模拟端行情+交易通道可达
-.\rr off                     # 实盘任务需先停用（与 dev cert 同规则）
 .\rr dev signal 2026-08-07   # 部署次日模拟验证
 .\rr dev signal stat
 ```
@@ -106,7 +105,9 @@ summary.json 的 `legs` 字段按模型记录各自成交/撤单结果。
 
 ## 注意事项
 
-- `rr dev cert`/`rr dev stress` 部署前要求实盘任务为 `Disabled`(先 `.\rr off`);
+- 除 `rr dev cert` 沿用既有受保护门禁（部署前要求实盘任务为 `Disabled`）外，
+  `rr dev stress`/`rr dev signal` 均为模拟账户专用、与实盘任务状态无关，
+  不要求先 `.\rr off`；
 - 运行中的任务不会被强制终止,避免跳过撤单与模拟持仓恢复;
 - 修改模拟验证相关源码会使受保护执行源码哈希变化,现有实盘证书随之失效,
   需重新 `.\rr cert`(与修改正式执行器的后果一致);

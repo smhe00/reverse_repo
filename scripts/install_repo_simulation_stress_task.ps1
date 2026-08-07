@@ -12,6 +12,10 @@ $wrapper = Join-Path `
     $PSScriptRoot `
     "run_repo_simulation_interface_stress.ps1"
 $now = Get-Date
+
+. (Join-Path $PSScriptRoot "reverse_repo_dev_isolation.ps1")
+Assert-DeveloperSimulationIsolation
+
 if ($StressDate -eq [datetime]::MinValue) {
     $candidate = $now.Date
     while (

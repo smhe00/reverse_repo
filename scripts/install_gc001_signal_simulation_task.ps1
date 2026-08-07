@@ -14,24 +14,8 @@ $wrapper = Join-Path `
     "run_gc001_signal_simulation.ps1"
 $now = Get-Date
 
-$managedTaskNames = @(
-    "miniQMT Reverse Repo First",
-    "miniQMT Reverse Repo Second"
-)
-foreach ($name in $managedTaskNames) {
-    $liveTask = Get-ScheduledTask `
-        -TaskName $name `
-        -ErrorAction SilentlyContinue
-    if (
-        $null -ne $liveTask `
-        -and [string]$liveTask.State -ne "Disabled"
-    ) {
-        throw (
-            "Live reverse-repo task is enabled: $name. " +
-            "Run .\rr off before deploying signal simulation."
-        )
-    }
-}
+. (Join-Path $PSScriptRoot "reverse_repo_dev_isolation.ps1")
+Assert-DeveloperSimulationIsolation
 
 if ($SignalDate -eq [datetime]::MinValue) {
     $candidate = $now.Date
