@@ -763,6 +763,12 @@ def main() -> int:
         "jump": args.offset_jump,
         "ofi": args.offset_ofi,
     }
+    tranches_by_trigger = {
+        "eat": [int(x.strip()) for x in args.eat_tranches.split(",") if x.strip()],
+        "wallgone": [int(x.strip()) for x in args.wallgone_tranches.split(",") if x.strip()],
+        "jump": [int(x.strip()) for x in args.eat_tranches.split(",") if x.strip()],
+        "ofi": [int(x.strip()) for x in args.eat_tranches.split(",") if x.strip()],
+    }
     runner = ValidationRunner(
         mode=args.mode,
         offsets=offsets,
