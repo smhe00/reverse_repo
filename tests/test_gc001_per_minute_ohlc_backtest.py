@@ -18,6 +18,7 @@ from gc001_per_minute_ohlc_backtest import (  # noqa: E402
     build_episodes,
     contextual_bandit_evaluate,
     load_ohlc,
+    minute_pattern_analysis,
     run_grid,
 )
 
@@ -88,6 +89,23 @@ class PerMinuteOhlcBacktestTests(unittest.TestCase):
         result = contextual_bandit_evaluate(two)
         self.assertIn("oos_mean_reward_bp", result)
         self.assertIn("baseline_always_act_mean_bp", result)
+
+    def test_minute_pattern_analysis_reports_best_offset_per_minute(self):
+        frame = _frame()
+        pattern = minute_pattern_analysis(
+            frame,
+            offsets=(0, 2, 4, 6),
+            hold=3,
+        )
+        self.assertFalse(pattern.empty)
+        self.assertIn("minute", pattern.columns)
+        self.assertIn("best_offset", pattern.columns)
+        self.assertIn("best_avg_reward_bp", pattern.columns)
+        # 每分钟一行
+        self.assertEqual(len(pattern), 8)
+        # 09:30 后价格持续上行，offset 越高成交价越高（但成交率降低），
+        # 最优 offset 应 >= 0 且为合法候选之一。
+        self.assertIn(int(pattern.loc[0, "best_offset"]), (0, 2, 4, 6))
 
 
 if __name__ == "__main__":

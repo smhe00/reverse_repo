@@ -279,10 +279,65 @@ def contextual_bandit_evaluate(
     }
 
 
+def minute_pattern_analysis(
+    frame: pd.DataFrame,
+    *,
+    offsets: tuple[int, ...] = (0, 2, 3, 4, 5, 6),
+    hold: int = 30,
+) -> pd.DataFrame:
+    """按分钟时段（09:31~11:29 / 13:01~14:59）统计各 offset 的
+    fill_rate 与平均收益，并给出每个时段的最优 offset。
+
+    用于从 244 天样本中寻找"哪些分钟更容易上行、挂多高的价更划算"的
+    一般规律。只读研究，不下单。
+    """
+    segments = _session_segments(frame)
+    minute_stats: dict[str, dict[int, dict[str, float | int]]] = {}
+    for offset in offsets:
+        episodes = _episode_arrays(segments, offset=offset, hold=hold)
+        if episodes.empty:
+            continue
+        for minute, group in episodes.groupby("minute"):
+            stats = minute_stats.setdefault(minute, {})
+            stats[offset] = {
+                "n": len(group),
+                "fill_rate": float(group["filled"].mean()),
+                "avg_reward_bp": float(group["reward_bp"].mean()),
+                "total_reward_bp": float(group["reward_bp"].sum()),
+            }
+    rows: list[dict[str, Any]] = []
+    for minute, offset_stats in minute_stats.items():
+        if not offset_stats:
+            continue
+        best = max(
+            offset_stats,
+            key=lambda o: offset_stats[o]["avg_reward_bp"],
+        )
+        rows.append(
+            {
+                "minute": minute,
+                "best_offset": best,
+                "best_avg_reward_bp": round(
+                    offset_stats[best]["avg_reward_bp"], 4
+                ),
+                "best_fill_rate": round(
+                    offset_stats[best]["fill_rate"], 4
+                ),
+                "n": offset_stats[best]["n"],
+            }
+        )
+    result = pd.DataFrame(rows).sort_values(
+        "best_avg_reward_bp",
+        ascending=False,
+    )
+    return result.reset_index(drop=True)
+
+
 def render_report(
     episodes: pd.DataFrame,
     grid: pd.DataFrame,
     bandit: dict[str, Any],
+    minute_pattern: pd.DataFrame,
 ) -> str:
     def table(frame: pd.DataFrame, limit: int = 40) -> str:
         if frame.empty:
@@ -307,6 +362,14 @@ def render_report(
     lines.append(json.dumps(bandit, ensure_ascii=False, indent=2))
     lines.append("```")
     lines.append("")
+    lines.append("## 分钟时段模式分析（244 天，hold=30）")
+    lines.append("")
+    if not minute_pattern.empty:
+        lines.append(table(minute_pattern, limit=25))
+        lines.append("")
+        lines.append("说明：`best_offset` 为该分钟在各 offset 中平均收益最高者；")
+        lines.append("收益按 1000 元、成交价=挂单价、未成交=0 的保守代理计算。")
+    lines.append("")
     lines.append("> 仅基于 1 分钟 OHLC 的研究结果；无五档盘口，不能计算 eat/wallgone。")
     return "\n".join(lines)
 
@@ -325,20 +388,29 @@ def main() -> int:
     episodes = build_episodes(frame, offset=args.offset, hold=args.hold)
     grid = run_grid(frame)
     bandit = contextual_bandit_evaluate(episodes)
+    minute_pattern = minute_pattern_analysis(frame)
 
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     episodes.to_csv(output / "episodes.csv", index=False)
     if not grid.empty:
         grid.to_csv(output / "grid.csv", index=False)
+    if not minute_pattern.empty:
+        minute_pattern.to_csv(output / "minute_pattern.csv", index=False)
     (output / "report.md").write_text(
-        render_report(episodes, grid, bandit),
+        render_report(episodes, grid, bandit, minute_pattern),
         encoding="utf-8",
     )
     print(f"output={output.resolve()}")
     print(f"episodes={len(episodes)}")
     print("grid:")
     print(grid.head(12).to_string(index=False) if not grid.empty else "(空)")
+    print("minute pattern (top 8):")
+    print(
+        minute_pattern.head(8).to_string(index=False)
+        if not minute_pattern.empty
+        else "(空)"
+    )
     print(json.dumps(bandit, ensure_ascii=False, indent=2))
     return 0
 
