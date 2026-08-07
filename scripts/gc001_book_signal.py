@@ -132,6 +132,7 @@ def _features_from_row(
     touch_ofi = float("nan")
     ask_eaten = 0.0
     ask_cancel = 0.0
+    ask_lost = 0.0
     wall_disappear = False
 
     if prev is not None:
@@ -163,6 +164,7 @@ def _features_from_row(
         lost_same = 0.0
         lost_gone_eaten = 0.0
         lost_gone_cancel = 0.0
+        lost_union = 0.0
         for p, v in prev_ask_map.items():
             if p in cur_ask_map:
                 lost_same += max(0.0, v - cur_ask_map[p])
@@ -170,6 +172,7 @@ def _features_from_row(
                 lost_gone_eaten += v
             else:
                 lost_gone_cancel += v
+        lost_union = lost_same + lost_gone_eaten + lost_gone_cancel
         prev_tot_ask = float(sum(prev_ask_v))
         d_last = last - float(prev["lastPrice"])
         prev_last = float(prev["lastPrice"])
@@ -179,6 +182,7 @@ def _features_from_row(
         rising = d_last >= 0 and trend2 >= TICK * 0.5
         falling = d_last <= 0 and trend2 <= -TICK * 0.5
         if prev_tot_ask > 0:
+            ask_lost = lost_union / prev_tot_ask
             if rising:
                 ask_eaten = (lost_same + lost_gone_eaten) / prev_tot_ask
                 ask_cancel = lost_gone_cancel / prev_tot_ask
@@ -217,7 +221,7 @@ def _features_from_row(
         ofi=ofi,
         ofi_norm=ofi_norm,
         touch_ofi=touch_ofi,
-        ask_lost_frac=ask_eaten + ask_cancel,
+        ask_lost_frac=ask_lost,
         ask_eaten_frac=ask_eaten,
         ask_cancel_frac=ask_cancel,
         wall_disappear=wall_disappear,

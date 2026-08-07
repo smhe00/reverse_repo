@@ -14,6 +14,25 @@ $wrapper = Join-Path `
     "run_gc001_signal_simulation.ps1"
 $now = Get-Date
 
+$managedTaskNames = @(
+    "miniQMT Reverse Repo First",
+    "miniQMT Reverse Repo Second"
+)
+foreach ($name in $managedTaskNames) {
+    $liveTask = Get-ScheduledTask `
+        -TaskName $name `
+        -ErrorAction SilentlyContinue
+    if (
+        $null -ne $liveTask `
+        -and [string]$liveTask.State -ne "Disabled"
+    ) {
+        throw (
+            "Live reverse-repo task is enabled: $name. " +
+            "Run .\rr off before deploying signal simulation."
+        )
+    }
+}
+
 if ($SignalDate -eq [datetime]::MinValue) {
     $candidate = $now.Date
     while (
@@ -38,8 +57,8 @@ $startAt = $SignalDate.AddHours(9).AddMinutes(27).AddSeconds(30)
 if ($startAt -le $now) {
     throw "Signal simulation trigger is not in the future: $startAt"
 }
-if ($Amount -lt 10000 -or $Amount -gt 1000000 -or ($Amount % 100) -ne 0) {
-    throw "Signal simulation amount must be 10,000-1,000,000 yuan in 100-yuan steps."
+if ($Amount -lt 10000 -or $Amount -gt 1000000 -or ($Amount % 1000) -ne 0) {
+    throw "Signal simulation amount must be 10,000-1,000,000 yuan in 1,000-yuan steps."
 }
 if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
     throw "Signal simulation wrapper is missing: $wrapper"

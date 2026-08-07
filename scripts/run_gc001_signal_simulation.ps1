@@ -51,8 +51,20 @@ if ($Smoke) {
     $arguments += "--smoke"
 }
 
-& $pythonPath @arguments *>> $logPath
-if ($null -eq $LASTEXITCODE) {
-    throw "Simulation signal test returned no exit code."
+$previousErrorActionPreference = $ErrorActionPreference
+# Windows PowerShell 5.1 turns native stderr redirected with *>> into error
+# records; under ErrorActionPreference=Stop the first stderr line becomes a
+# terminating error and never reaches the log. Capture with Continue so the
+# signal validation failure reason lands in the log.
+$ErrorActionPreference = "Continue"
+try {
+    & $pythonPath @arguments *>> $logPath
+    if ($null -eq $LASTEXITCODE) {
+        throw "Simulation signal test returned no exit code."
+    }
+    $processExitCode = [int]$LASTEXITCODE
 }
-exit [int]$LASTEXITCODE
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+exit $processExitCode

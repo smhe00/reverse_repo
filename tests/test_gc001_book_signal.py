@@ -206,9 +206,10 @@ class FeatureComputationTests(unittest.TestCase):
         self.assertAlmostEqual(frame.ask_cancel_frac, 7000 / 20000, places=9)
         self.assertEqual(frame.ask_eaten_frac, 0.0)
 
-    def test_flat_frame_double_counts_same_price_loss(self):
-        # Documented quirk: in a flat market the same-price loss is counted in
-        # both eaten and cancel, so ask_lost_frac can exceed 1.0.
+    def test_flat_frame_lost_fraction_is_bounded(self):
+        # ask_lost_frac counts the union of same-price loss and gone levels
+        # once, so it stays <= 1.0 even when eaten/cancel attribution overlaps
+        # in a flat market.
         prev = row(
             ask_prices=[1.500],
             ask_vols=[10000.0],
@@ -228,7 +229,7 @@ class FeatureComputationTests(unittest.TestCase):
         frame = _features_from_row(current, prev=prev, prev2=None, prev_feat=None)
         self.assertAlmostEqual(frame.ask_eaten_frac, 0.7, places=9)
         self.assertAlmostEqual(frame.ask_cancel_frac, 0.7, places=9)
-        self.assertAlmostEqual(frame.ask_lost_frac, 1.4, places=9)
+        self.assertAlmostEqual(frame.ask_lost_frac, 0.7, places=9)
 
     def test_wall_disappear_detected(self):
         prev = row(
@@ -476,7 +477,6 @@ class ValidationRunnerTests(unittest.TestCase):
             "offsets": {"eat": 2, "wallgone": 6, "jump": 2, "ofi": 2},
             "anchor": "ask1",
             "hold_seconds": 60,
-            "fallback_market": False,
         }
         settings.update(overrides)
         return ValidationRunner(**settings)

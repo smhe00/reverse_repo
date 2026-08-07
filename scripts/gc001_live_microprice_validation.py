@@ -4,7 +4,7 @@
 策略。与主交易器（gc001_live_daily_90pct_093042.py）完全独立：
 - shadow 模式：只读行情，计算信号与"若挂单是否成交"，绝不下单；
 - live/sim 模式：按信号挂一笔小额限价卖单（默认 10 万元），未成交到硬
-  截止撤单，绝不自动追价（除非显式 --fallback-market）。
+  截止撤单，绝不自动追价。
 - sim 模式：仅允许模拟 QMT 路径（含"模拟"），不需要授权 token，用于
   `.\rr dev signal` 在模拟端走完整下单/撤单链路；
 - --smoke：只做连接检查（行情订阅 + 模拟/实盘交易通道连接 + 账户查询 +
@@ -96,7 +96,6 @@ def parse_args() -> argparse.Namespace:
         default="6,7",
         help="wallgone 分档偏移（tick，逗号分隔），默认 6,7",
     )
-    parser.add_argument("--fallback-market", action="store_true", help="live 未成交撤单后按 bid1 市价卖出")
     parser.add_argument("--smoke", action="store_true", help="连接检查：订阅行情+连接交易通道，轮询若干帧后退出")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument(
@@ -207,13 +206,11 @@ class ValidationRunner:
         offsets: dict[str, int],
         anchor: str,
         hold_seconds: int,
-        fallback_market: bool,
     ) -> None:
         self.mode = mode
         self.offsets = offsets
         self.anchor = anchor
         self.hold_seconds = hold_seconds
-        self.fallback_market = fallback_market
         self.state = "waiting_trigger"
         self.trigger_type: str | None = None
         self.trigger_hms: str | None = None
@@ -634,7 +631,6 @@ def run_replay(args: argparse.Namespace) -> int:
         offsets=offsets,
         anchor=args.anchor,
         hold_seconds=args.hold_seconds,
-        fallback_market=False,
     )
 
     seen: set[int] = set()
@@ -681,8 +677,8 @@ def main() -> int:
             raise ValueError("sim mode requires a simulation QMT path (must contain 模拟)")
         if not (10_000 <= args.amount <= 1_000_000):
             raise ValueError("sim amount must be from 10,000 to 1,000,000 yuan")
-        if args.amount % QMT_FACE_VALUE_YUAN != 0:
-            raise ValueError("sim amount must be a multiple of 100 yuan")
+        if args.amount % 1000 != 0:
+            raise ValueError("sim amount must be a multiple of 1,000 yuan")
         if not args.account_binding:
             raise ValueError("sim mode requires --account-binding (repo_simulation_account_binding.local.json)")
         binding = _load_binding(Path(args.account_binding), "simulation")
@@ -699,8 +695,8 @@ def main() -> int:
             raise ValueError("live mode requires a real (non-simulation) QMT path")
         if not (10_000 <= args.amount <= 1_000_000):
             raise ValueError("live amount must be from 10,000 to 1,000,000 yuan")
-        if args.amount % QMT_FACE_VALUE_YUAN != 0:
-            raise ValueError("live amount must be a multiple of 100 yuan")
+        if args.amount % 1000 != 0:
+            raise ValueError("live amount must be a multiple of 1,000 yuan")
         if not args.account_binding:
             raise ValueError("live mode requires --account-binding (repo_live_account_binding.local.json)")
         binding = _load_binding(Path(args.account_binding), "live")
@@ -734,7 +730,6 @@ def main() -> int:
             "ofi": args.offset_ofi,
         },
         "hold_seconds": args.hold_seconds,
-        "fallback_market": args.fallback_market,
         "amount_yuan": args.amount if args.mode == "live" else None,
         "binding_label": binding.get("label") if binding else None,
         "binding_environment": binding.get("environment") if binding else None,
@@ -773,7 +768,6 @@ def main() -> int:
         offsets=offsets,
         anchor=args.anchor,
         hold_seconds=args.hold_seconds,
-        fallback_market=args.fallback_market,
     )
     trader = None
     account = None
